@@ -3,12 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>赛事项目分组V_10.4 </title>
+    <title>赛事项目分组V_10.4</title>
     <link href="bootstrap.min.css" rel="stylesheet">
     <script src="bootstrap.bundle.min.js"></script>
     <script src="xlsx.full.min.js"></script>
     <script src="Sortable.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/crypto-js@4.2.0/crypto-js.min.js"></script>
     <style>
+        /* ========== 原有样式完整保留 ========== */
         * { box-sizing: border-box; }
         body { background: #f0f2f5; font-family: 'Segoe UI', Roboto, 'Microsoft YaHei', sans-serif; padding: 20px; color: #212529; }
         .section { background: white; border-radius: 20px; padding: 1.5rem; margin-bottom: 2rem; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
@@ -67,609 +69,787 @@
             .result-detail { flex-basis: 100%; }
             .result-status { text-align: left; margin-top: 4px; }
         }
+
+        /* 授权遮罩样式 */
+        .lock-mask {
+            position: fixed; top: 0; left: 0;
+            width: 100vw; height: 100vh;
+            background: rgba(0,0,0,0.85);
+            z-index: 9999;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .login-box {
+            background: #fff; padding: 30px; border-radius: 8px;
+            width: 380px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        }
+        .login-box h3 { text-align: center; margin-bottom: 20px; }
+        .login-item { margin: 15px 0; }
+        .login-item label { display: block; margin-bottom: 5px; font-weight: 500; }
+        .login-item input {
+            width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px;
+        }
+        .login-btn {
+            width: 100%; padding: 10px; background: #2488ff; color: #fff;
+            border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 10px;
+        }
+        .login-btn:hover { background: #1a6ad0; }
+        .tip { color: red; font-size: 14px; margin-top: 10px; text-align: center; min-height: 20px; }
     </style>
 </head>
 <body>
-<div class="container-fluid">
-    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap">
-        <h1>🏆 赛事项目分组V_10.4 <span class="fs-6 text-muted"></span></h1>
-        <button class="btn btn-outline-danger" id="resetAllBtn">重置所有数据</button>
+    <!-- 授权遮罩层 -->
+    <div class="lock-mask" id="lockMask">
+        <div class="login-box">
+            <h3>🔐 身份验证</h3>
+            <div class="login-item">
+                <label>账号</label>
+                <input type="text" id="inpAccount" placeholder="请输入账号" autocomplete="off">
+            </div>
+            <div class="login-item">
+                <label>授权码</label>
+                <input type="text" id="inpCode" placeholder="请输入64位Base64授权码" autocomplete="off">
+            </div>
+            <button class="login-btn" id="doLoginBtn">立即验证</button>
+            <div class="tip" id="tipText"></div>
+        </div>
     </div>
 
-    <!-- 1. 导入项目 -->
-    <div class="section">
-        <h4>📁 1. 导入项目数据</h4>
-        <div class="alert alert-info">模板必需列：赛道、参赛组别、参赛类别、项目名称、所属地区、所属学校、负责人姓名、负责人手机号</div>
-        <div class="row g-3 mb-3">
-            <div class="col-md-4"><button class="btn btn-success" id="downloadTemplateBtn">📥 下载模板</button></div>
-            <div class="col-md-8"><input type="file" id="projectFile" class="form-control" accept=".xlsx,.xls"></div>
-        </div>
-        <div class="table-container">
-            <table class="table table-striped table-bordered project-table">
-                <thead class="table-light"><tr><th>#</th><th>项目名称</th><th>所属学校</th><th>赛道</th><th>参赛组别</th><th>参赛类别</th><th>地区</th><th>负责人</th><th>手机号</th></tr</thead>
-                <tbody id="projectPreview"></tbody>
-            </table>
-        </div>
-        <div class="mt-2"><strong>📊 项目总数: <span id="totalProj">0</span> | 涉及高校: <span id="totalSchools">0</span></strong></div>
-    </div>
+    <!-- ========= 主界面内容（初始隐藏） ========= -->
+    <div id="appContent" style="display: none;">
+        <div class="container-fluid">
+            <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap">
+                <h1>🏆 赛事项目分组V_10.4 <span class="fs-6 text-muted"></span></h1>
+                <div>
+                    <button class="btn btn-outline-secondary me-2" id="clearCacheBtn">🧹 清除缓存/重置</button>
+                    <button class="btn btn-outline-danger" id="resetAllBtn">重置所有数据</button>
+                </div>
+            </div>
 
-    <!-- 2. 拆分维度选择 + 评审组配置 -->
-    <div class="section" id="comboSection" style="display:none;">
-        <div class="d-flex justify-content-between align-items-center flex-wrap mb-3">
-            <h4>🎯 2. 拆分评审组</h4>
-            <div class="dimension-switch btn-group" role="group">
-                <button type="button" class="btn btn-outline-primary" id="dimensionTrackGroupBtn">赛道 + 参赛组别</button>
-                <button type="button" class="btn btn-outline-primary" id="dimensionTrackGroupCatBtn">赛道 + 参赛组别 + 参赛类别</button>
+            <!-- 1. 导入项目 -->
+            <div class="section">
+                <h4>📁 1. 导入项目数据</h4>
+                <div class="alert alert-info">模板必需列：赛道、参赛组别、参赛类别、项目名称、所属地区、所属学校、负责人姓名、负责人手机号</div>
+                <div class="row g-3 mb-3">
+                    <div class="col-md-4"><button class="btn btn-success" id="downloadTemplateBtn">📥 下载模板</button></div>
+                    <div class="col-md-8"><input type="file" id="projectFile" class="form-control" accept=".xlsx,.xls"></div>
+                </div>
+                <div class="table-container">
+                    <table class="table table-striped table-bordered project-table">
+                        <thead class="table-light"><tr><th>#</th><th>项目名称</th><th>所属学校</th><th>赛道</th><th>参赛组别</th><th>参赛类别</th><th>地区</th><th>负责人</th><th>手机号</th></tr</thead>
+                        <tbody id="projectPreview"></tbody>
+                    </table>
+                </div>
+                <div class="mt-2"><strong>📊 项目总数: <span id="totalProj">0</span> | 涉及高校: <span id="totalSchools">0</span></strong></div>
+            </div>
+
+            <!-- 2. 拆分维度选择 + 评审组配置 -->
+            <div class="section" id="comboSection" style="display:none;">
+                <div class="d-flex justify-content-between align-items-center flex-wrap mb-3">
+                    <h4>🎯 2. 拆分评审组</h4>
+                    <div class="dimension-switch btn-group" role="group">
+                        <button type="button" class="btn btn-outline-primary" id="dimensionTrackGroupBtn">赛道 + 参赛组别</button>
+                        <button type="button" class="btn btn-outline-primary" id="dimensionTrackGroupCatBtn">赛道 + 参赛组别 + 参赛类别</button>
+                    </div>
+                </div>
+                <div class="alert alert-secondary">每个组合独立设置评审组数量、容量。相同名称的评审组将自动合并为混合组，保留独立配额。<br>
+                <span class="text-success"><strong>支持拖拽表格行调整顺序</strong>（拖拽左侧⋮⋮图标）。</span></div>
+                <div id="comboConfigTable"></div>
+                <div class="mt-3 d-flex gap-2 flex-wrap">
+                    <button class="btn btn-primary" id="applyComboBtn">✅ 应用配置 & 生成评审组（相同名称自动合并，保留配额）</button>
+                </div>
+                <div id="groupSummary" class="mt-2 small text-muted"></div>
+            </div>
+
+            <!-- 3. 排序策略设置 -->
+            <div class="section" id="strategySection" style="display:none;">
+                <h4>🔄 3. 设置排序策略</h4>
+                <div class="alert alert-warning">排序策略影响项目最终顺序。支持拖拽调整评审组显示顺序，以及混合组内部参赛组别的先后顺序。</div>
+                <div id="strategyList" class="strategy-list-container"></div>
+                <div class="mt-3">
+                    <button class="btn btn-info" id="openAvoidBtn">⚙️ 配置回避规则 (可选)</button>
+                    <button class="btn btn-warning btn-lg ms-2" id="executeGroupingBtn">🚀 执行智能分组</button>
+                </div>
+            </div>
+
+            <!-- 4. 分组结果 -->
+            <div class="section" id="resultSection" style="display:none;">
+                <h4>📋 4. 分组结果</h4>
+                <div id="statsMsg" class="alert alert-info"></div>
+                <div class="d-flex gap-2 mb-3">
+                    <button class="btn btn-primary" id="downloadResultBtn">⬇️ 下载分组结果（完整字段）</button>
+                    <button class="btn btn-outline-secondary" id="showDistBtn">📊 高校分布统计 (可编辑调整)</button>
+                    <button class="btn btn-outline-success" id="recalcConsecutiveBtn">🔄 重新统计连续次数</button>
+                </div>
+                <div id="resultCards"></div>
             </div>
         </div>
-        <div class="alert alert-secondary">每个组合独立设置评审组数量、容量。相同名称的评审组将自动合并为混合组，保留独立配额。<br>
-        <span class="text-success"><strong>支持拖拽表格行调整顺序</strong>（拖拽左侧⋮⋮图标）。</span></div>
-        <div id="comboConfigTable"></div>
-        <div class="mt-3 d-flex gap-2 flex-wrap">
-            <button class="btn btn-primary" id="applyComboBtn">✅ 应用配置 & 生成评审组（相同名称自动合并，保留配额）</button>
-        </div>
-        <div id="groupSummary" class="mt-2 small text-muted"></div>
     </div>
 
-    <!-- 3. 排序策略设置 -->
-    <div class="section" id="strategySection" style="display:none;">
-        <h4>🔄 3. 设置排序策略</h4>
-        <div class="alert alert-warning">排序策略影响项目最终顺序。支持拖拽调整评审组显示顺序，以及混合组内部参赛组别的先后顺序。</div>
-        <div id="strategyList" class="strategy-list-container"></div>
-        <div class="mt-3">
-            <button class="btn btn-info" id="openAvoidBtn">⚙️ 配置回避规则 (可选)</button>
-            <button class="btn btn-warning btn-lg ms-2" id="executeGroupingBtn">🚀 执行智能分组</button>
+    <!-- 分布统计模态框（原有） -->
+    <div class="modal fade" id="distModal" data-bs-backdrop="static" tabindex="-1">
+        <div class="modal-dialog modal-fullscreen-xl-down" style="max-width: 95vw;">
+            <div class="modal-content">
+                <div class="modal-header"><h5 class="modal-title">各高校项目分布统计</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body distribution-wrapper" id="distModalBody"></div>
+                <div class="modal-footer"><button class="btn btn-success" id="downloadDistExcelBtn">📎 下载分布Excel</button><button class="btn btn-warning" id="clearModifiedBtn">清空修改标记</button><button class="btn btn-primary" id="applyDistBtn">应用调整并重新分组</button><button class="btn btn-secondary" data-bs-dismiss="modal">关闭</button></div>
+            </div>
         </div>
     </div>
 
-    <!-- 4. 分组结果 -->
-    <div class="section" id="resultSection" style="display:none;">
-        <h4>📋 4. 分组结果</h4>
-        <div id="statsMsg" class="alert alert-info"></div>
-        <div class="d-flex gap-2 mb-3">
-            <button class="btn btn-primary" id="downloadResultBtn">⬇️ 下载分组结果（完整字段）</button>
-            <button class="btn btn-outline-secondary" id="showDistBtn">📊 高校分布统计 (可编辑调整)</button>
-            <button class="btn btn-outline-success" id="recalcConsecutiveBtn">🔄 重新统计连续次数</button>
-        </div>
-        <div id="resultCards"></div>
-    </div>
-</div>
-
-<!-- 分布统计模态框 -->
-<div class="modal fade" id="distModal" data-bs-backdrop="static" tabindex="-1">
-    <div class="modal-dialog modal-fullscreen-xl-down" style="max-width: 95vw;">
-        <div class="modal-content">
-            <div class="modal-header"><h5 class="modal-title">各高校项目分布统计</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-            <div class="modal-body distribution-wrapper" id="distModalBody"></div>
-            <div class="modal-footer"><button class="btn btn-success" id="downloadDistExcelBtn">📎 下载分布Excel</button><button class="btn btn-warning" id="clearModifiedBtn">清空修改标记</button><button class="btn btn-primary" id="applyDistBtn">应用调整并重新分组</button><button class="btn btn-secondary" data-bs-dismiss="modal">关闭</button></div>
+    <!-- 回避规则模态框（原有） -->
+    <div class="modal fade" id="avoidModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-info text-white"><h5 class="modal-title">设置评审组回避规则 (非必填)</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body" id="avoidModalBody"></div>
+                <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">取消</button><button class="btn btn-primary" id="saveAvoidModalBtn">保存规则</button></div>
+            </div>
         </div>
     </div>
-</div>
 
-<!-- 回避规则模态框 -->
-<div class="modal fade" id="avoidModal" tabindex="-1">
-    <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-            <div class="modal-header bg-info text-white"><h5 class="modal-title">设置评审组回避规则 (非必填)</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
-            <div class="modal-body" id="avoidModalBody"></div>
-            <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">取消</button><button class="btn btn-primary" id="saveAvoidModalBtn">保存规则</button></div>
-        </div>
-    </div>
-</div>
+    <!-- ========= 原有业务脚本（完整保留，未作任何改动） ========= -->
+    <script>
+        // 原始赛事项目分组V10.4完整业务脚本
+        document.addEventListener('DOMContentLoaded', function() {
+            if (typeof bootstrap === 'undefined') { alert('Bootstrap 库加载失败'); return; }
+            if (typeof XLSX === 'undefined') { alert('XLSX 库加载失败'); return; }
+            if (typeof Sortable === 'undefined') { alert('SortableJS 库加载失败'); return; }
 
-<script>
-    document.addEventListener('DOMContentLoaded', function() {
-        if (typeof bootstrap === 'undefined') { alert('Bootstrap 库加载失败'); return; }
-        if (typeof XLSX === 'undefined') { alert('XLSX 库加载失败'); return; }
-        if (typeof Sortable === 'undefined') { alert('SortableJS 库加载失败'); return; }
+            let projects = [];
+            let comboStats = {};
+            let comboSettings = {};
+            let finalGroups = [];
+            let groupingResult = [];
+            let schoolTotal = {};
+            let distributionData = {};
+            let modifiedSchools = new Set();
+            let avoidRules = {};
+            let sortableInstances = [];
+            let strategySortable = null;
+            let dimensionMode = 'track-group';
+            let comboTableSortable = null;
+            let orderedComboKeys = null;
 
-        let projects = [];
-        let comboStats = {};
-        let comboSettings = {};
-        let finalGroups = [];
-        let groupingResult = [];
-        let schoolTotal = {};
-        let distributionData = {};
-        let modifiedSchools = new Set();
-        let avoidRules = {};
-        let sortableInstances = [];
-        let strategySortable = null;
-        let dimensionMode = 'track-group';
-        let comboTableSortable = null;
-        let orderedComboKeys = null;
-
-        function escapeHtml(str) { if(!str) return ''; return String(str).replace(/[&<>]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;'})[m]); }
-        function escapeAttr(str) { return String(str).replace(/['"]/g, c => c==="'" ? '&#39;' : '&quot;'); }
-        function shuffle(arr) { for (let i=arr.length-1;i>0;i--) { const j=Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; } return arr; }
-        function generateId() { return Date.now()+'-'+Math.random().toString(36); }
-        function normalizeSchool(school) { return (school || '').toString().trim(); }
-        
-        function getComboKey(project) {
-            const track = project.track || '';
-            const groupLevel = project.groupLevel || '';
-            if (dimensionMode === 'track-group') return `${track}|${groupLevel}`;
-            let category = project.category || '';
-            if (!category || category.trim() === '') category = '未填写类别';
-            return `${track}|${groupLevel}|${category}`;
-        }
-        function formatComboKey(comboKey) { return comboKey.replace(/\|/g, ' | '); }
-        function parseComboParts(comboKey) {
-            const parts = comboKey.split('|');
-            if (dimensionMode === 'track-group') return { track: parts[0] || '', group: parts[1] || '', category: null };
-            return { track: parts[0] || '', group: parts[1] || '', category: parts[2] || '' };
-        }
-        
-        function computeConsecutiveDetails(arr) { let cnt=0; for(let i=1;i<arr.length;i++) if(normalizeSchool(arr[i].school)===normalizeSchool(arr[i-1].school)) cnt++; return cnt; }
-        
-        function refreshAllConsecutiveStats() {
-            if (!groupingResult.length) return;
-            let total=0;
-            for(let grp of groupingResult){
-                let cnt=0;
-                for(let i=0;i<grp.projects.length;i++){
-                    const isCons=(i>0 && normalizeSchool(grp.projects[i].school)===normalizeSchool(grp.projects[i-1].school));
-                    grp.projects[i].isConsecutive=isCons;
-                    if(isCons) cnt++;
-                    grp.projects[i].groupIndex=i+1;
-                }
-                grp.consecutiveCount=cnt; total+=cnt;
+            function escapeHtml(str) { if(!str) return ''; return String(str).replace(/[&<>]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;'})[m]); }
+            function escapeAttr(str) { return String(str).replace(/['"]/g, c => c==="'" ? '&#39;' : '&quot;'); }
+            function shuffle(arr) { for (let i=arr.length-1;i>0;i--) { const j=Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; } return arr; }
+            function generateId() { return Date.now()+'-'+Math.random().toString(36); }
+            function normalizeSchool(school) { return (school || '').toString().trim(); }
+            
+            function getComboKey(project) {
+                const track = project.track || '';
+                const groupLevel = project.groupLevel || '';
+                if (dimensionMode === 'track-group') return `${track}|${groupLevel}`;
+                let category = project.category || '';
+                if (!category || category.trim() === '') category = '未填写类别';
+                return `${track}|${groupLevel}|${category}`;
             }
-            const el=document.getElementById('statsMsg');
-            if(el) el.innerHTML=`✅ 分组完成 | 分配项目 ${groupingResult.reduce((s,g)=>s+g.projects.length,0)}/${projects.length} | 同校连续总数 ${total}`;
-            return total;
-        }
-        
-        function safeGetElement(id){ const e=document.getElementById(id); if(!e) console.warn(`元素${id}未找到`); return e; }
-        function forceCloseModal(modalElem){ if(modalElem){ let inst=bootstrap.Modal.getInstance(modalElem); if(inst) inst.hide(); } document.querySelectorAll('.modal-backdrop').forEach(b=>b.remove()); document.body.classList.remove('modal-open'); document.body.style.overflow=''; document.body.style.paddingRight=''; }
-        
-        // 计算当前全部评审组数量（相同名称合并后）
-        function calculateTotalGroupsCount() {
-            const groupMap = new Map();
-            for (let [comboKey, stat] of Object.entries(comboStats)) {
-                const setting = comboSettings[comboKey];
-                if (!setting) continue;
-                for (let sg of setting.subGroups) {
-                    const name = sg.name.trim();
-                    if (!groupMap.has(name)) groupMap.set(name, true);
+            function formatComboKey(comboKey) { return comboKey.replace(/\|/g, ' | '); }
+            function parseComboParts(comboKey) {
+                const parts = comboKey.split('|');
+                if (dimensionMode === 'track-group') return { track: parts[0] || '', group: parts[1] || '', category: null };
+                return { track: parts[0] || '', group: parts[1] || '', category: parts[2] || '' };
+            }
+            
+            function computeConsecutiveDetails(arr) { let cnt=0; for(let i=1;i<arr.length;i++) if(normalizeSchool(arr[i].school)===normalizeSchool(arr[i-1].school)) cnt++; return cnt; }
+            
+            function refreshAllConsecutiveStats() {
+                if (!groupingResult.length) return;
+                let total=0;
+                for(let grp of groupingResult){
+                    let cnt=0;
+                    for(let i=0;i<grp.projects.length;i++){
+                        const isCons=(i>0 && normalizeSchool(grp.projects[i].school)===normalizeSchool(grp.projects[i-1].school));
+                        grp.projects[i].isConsecutive=isCons;
+                        if(isCons) cnt++;
+                        grp.projects[i].groupIndex=i+1;
+                    }
+                    grp.consecutiveCount=cnt; total+=cnt;
+                }
+                const el=document.getElementById('statsMsg');
+                if(el) el.innerHTML=`✅ 分组完成 | 分配项目 ${groupingResult.reduce((s,g)=>s+g.projects.length,0)}/${projects.length} | 同校连续总数 ${total}`;
+                return total;
+            }
+            
+            function safeGetElement(id){ const e=document.getElementById(id); if(!e) console.warn(`元素${id}未找到`); return e; }
+            function forceCloseModal(modalElem){ if(modalElem){ let inst=bootstrap.Modal.getInstance(modalElem); if(inst) inst.hide(); } document.querySelectorAll('.modal-backdrop').forEach(b=>b.remove()); document.body.classList.remove('modal-open'); document.body.style.overflow=''; document.body.style.paddingRight=''; }
+            
+            function calculateTotalGroupsCount() {
+                const groupMap = new Map();
+                for (let [comboKey, stat] of Object.entries(comboStats)) {
+                    const setting = comboSettings[comboKey];
+                    if (!setting) continue;
+                    for (let sg of setting.subGroups) {
+                        const name = sg.name.trim();
+                        if (!groupMap.has(name)) groupMap.set(name, true);
+                    }
+                }
+                return groupMap.size;
+            }
+            
+            function updateTotalGroupsHeader() {
+                const total = calculateTotalGroupsCount();
+                const thElements = document.querySelectorAll('#comboConfigTable th');
+                for (let th of thElements) {
+                    if (th.innerText.includes('评审组名称')) {
+                        let oldText = th.innerText.replace(/（共.*?个评审组）/, '').trim();
+                        th.innerHTML = `${oldText} <span class="group-count-header">（共 ${total} 个评审组）</span>`;
+                        break;
+                    }
                 }
             }
-            return groupMap.size;
-        }
-        
-        function updateTotalGroupsHeader() {
-            const total = calculateTotalGroupsCount();
-            const thElements = document.querySelectorAll('#comboConfigTable th');
-            for (let th of thElements) {
-                if (th.innerText.includes('评审组名称')) {
-                    let oldText = th.innerText.replace(/（共.*?个评审组）/, '').trim();
-                    th.innerHTML = `${oldText} <span class="group-count-header">（共 ${total} 个评审组）</span>`;
-                    break;
+            
+            function getSortedComboEntries() {
+                if (orderedComboKeys && orderedComboKeys.length) {
+                    const entries = [];
+                    for (let key of orderedComboKeys) {
+                        if (comboStats[key]) entries.push([key, comboStats[key]]);
+                    }
+                    for (let [key, val] of Object.entries(comboStats)) {
+                        if (!entries.some(e=>e[0]===key)) entries.push([key, val]);
+                    }
+                    return entries;
                 }
-            }
-        }
-        
-        function getSortedComboEntries() {
-            if (orderedComboKeys && orderedComboKeys.length) {
-                const entries = [];
-                for (let key of orderedComboKeys) {
-                    if (comboStats[key]) entries.push([key, comboStats[key]]);
-                }
-                for (let [key, val] of Object.entries(comboStats)) {
-                    if (!entries.some(e=>e[0]===key)) entries.push([key, val]);
-                }
+                const entries = Object.entries(comboStats);
+                entries.sort((a,b) => {
+                    const partsA = parseComboParts(a[0]);
+                    const partsB = parseComboParts(b[0]);
+                    const trackCompare = (partsA.track || '').localeCompare(partsB.track || '', 'zh');
+                    if (trackCompare !== 0) return trackCompare;
+                    const groupOrder = (g) => {
+                        if (g === '本科生创意组') return 1;
+                        if (g === '本科生创业组') return 2;
+                        if (g === '研究生创意组') return 3;
+                        if (g === '研究生创业组') return 4;
+                        return 10;
+                    };
+                    const orderA = groupOrder(partsA.group);
+                    const orderB = groupOrder(partsB.group);
+                    if (orderA !== orderB) return orderA - orderB;
+                    const groupCompare = (partsA.group || '').localeCompare(partsB.group || '', 'zh');
+                    if (groupCompare !== 0) return groupCompare;
+                    const catA = partsA.category || '';
+                    const catB = partsB.category || '';
+                    return catA.localeCompare(catB, 'zh');
+                });
                 return entries;
             }
-            const entries = Object.entries(comboStats);
-            entries.sort((a,b) => {
-                const partsA = parseComboParts(a[0]);
-                const partsB = parseComboParts(b[0]);
-                const trackCompare = (partsA.track || '').localeCompare(partsB.track || '', 'zh');
-                if (trackCompare !== 0) return trackCompare;
-                const groupOrder = (g) => {
-                    if (g === '本科生创意组') return 1;
-                    if (g === '本科生创业组') return 2;
-                    if (g === '研究生创意组') return 3;
-                    if (g === '研究生创业组') return 4;
-                    return 10;
-                };
-                const orderA = groupOrder(partsA.group);
-                const orderB = groupOrder(partsB.group);
-                if (orderA !== orderB) return orderA - orderB;
-                const groupCompare = (partsA.group || '').localeCompare(partsB.group || '', 'zh');
-                if (groupCompare !== 0) return groupCompare;
-                const catA = partsA.category || '';
-                const catB = partsB.category || '';
-                return catA.localeCompare(catB, 'zh');
-            });
-            return entries;
-        }
-        
-        function renderComboTable() {
-            const container = safeGetElement('comboConfigTable');
-            if (!container) return;
-            const isThreeDim = (dimensionMode === 'track-group-category');
-            let html = `<table class="combo-table" id="comboMainTable"><thead><tr>`;
-            html += `<th style="width:30px">⋮⋮</th><th>赛道</th><th>参赛组别</th>`;
-            if (isThreeDim) html += `<th>参赛类别</th>`;
-            html += `<th>项目数</th><th>评审组数量</th><th>每组容量</th><th>评审组名称</th><th>操作</th></tr</thead><tbody id="comboTableBody">`;
             
-            const sortedEntries = getSortedComboEntries();
-            for (let [key, stat] of sortedEntries) {
-                const parts = parseComboParts(key);
-                const setting = comboSettings[key] || { groupCount: 1, subGroups: [] };
-                let groupCount = setting.groupCount;
-                if (setting.subGroups.length !== groupCount) {
-                    const newSub = [];
-                    for (let i = 0; i < groupCount; i++) {
-                        const base = Math.floor(stat.count / groupCount);
-                        const rem = stat.count % groupCount;
-                        const cap = base + (i < rem ? 1 : 0);
-                        newSub.push({ name: `${formatComboKey(key)}-评审组${i+1}`, capacity: cap });
-                    }
-                    setting.subGroups = newSub;
-                    comboSettings[key] = setting;
-                }
-                const rowspan = setting.subGroups.length;
-                for (let i = 0; i < rowspan; i++) {
-                    const sg = setting.subGroups[i];
-                    html += `<tr data-combo-key="${escapeAttr(key)}">`;
-                    if (i === 0) {
-                        html += `<td rowspan="${rowspan}" class="drag-handle-cell">⋮⋮</td>`;
-                        html += `<td rowspan="${rowspan}">${escapeHtml(parts.track)}</td>`;
-                        html += `<td rowspan="${rowspan}">${escapeHtml(parts.group)}</td>`;
-                        if (isThreeDim) html += `<td rowspan="${rowspan}">${escapeHtml(parts.category || '—')}</td>`;
-                        html += `<td rowspan="${rowspan}">${stat.count}</td>`;
-                        html += `<td rowspan="${rowspan}"><input type="number" min="1" max="${stat.count}" value="${groupCount}" class="form-control form-control-sm" style="width:90px" data-combo="${escapeAttr(key)}" onchange="window.changeGroupCount('${escapeAttr(key)}',this.value)"></td>`;
-                    }
-                    html += `<td><input type="number" class="capacity-input form-control form-control-sm" value="${sg.capacity}" min="1" max="${stat.count}" data-combo="${escapeAttr(key)}" data-idx="${i}" onchange="window.updateCapacity('${escapeAttr(key)}',${i},this.value)"></td>`;
-                    html += `<td><input type="text" class="group-name-input form-control form-control-sm" value="${escapeAttr(sg.name)}" data-combo="${escapeAttr(key)}" data-idx="${i}" onchange="window.updateGroupName('${escapeAttr(key)}',${i},this.value)"></td>`;
-                    if (i === 0) {
-                        html += `<td rowspan="${rowspan}"><button class="btn btn-sm btn-outline-secondary" onclick="window.initSubGroups('${escapeAttr(key)}')">重置</button></td>`;
-                    }
-                    html += `</tr>`;
-                }
-                const totalCap = setting.subGroups.reduce((s, g) => s + g.capacity, 0);
-                if (totalCap !== stat.count) html += `<tr class="table-danger"><td colspan="${isThreeDim ? 8 : 7}"><span class="text-danger">⚠️ 容量总和 ${totalCap} ≠ 项目总数 ${stat.count}</span></td></tr>`;
-            }
-            html += `</tbody></table>`;
-            container.innerHTML = html;
-            updateTotalGroupsHeader();
-            
-            const tbody = document.getElementById('comboTableBody');
-            if (tbody && comboTableSortable) comboTableSortable.destroy();
-            if (tbody) {
-                comboTableSortable = new Sortable(tbody, {
-                    animation: 200,
-                    handle: '.drag-handle-cell',
-                    onEnd: function() {
-                        const rows = tbody.querySelectorAll('tr[data-combo-key]');
-                        const newOrderKeys = [];
-                        rows.forEach(row => {
-                            const key = row.getAttribute('data-combo-key');
-                            if (key && !newOrderKeys.includes(key)) newOrderKeys.push(key);
-                        });
-                        orderedComboKeys = newOrderKeys;
-                        renderComboTable();
-                    }
-                });
-            }
-        }
-        
-        window.changeGroupCount = (comboKey, val) => {
-            let cnt = Math.max(1, parseInt(val) || 1);
-            const stat = comboStats[comboKey];
-            if (cnt > stat.count) cnt = stat.count;
-            let setting = comboSettings[comboKey] || { groupCount: 1, subGroups: [] };
-            setting.groupCount = cnt;
-            const newSub = [];
-            for (let i = 0; i < cnt; i++) {
-                const base = Math.floor(stat.count / cnt);
-                const rem = stat.count % cnt;
-                const cap = base + (i < rem ? 1 : 0);
-                const old = setting.subGroups[i];
-                newSub.push({ name: old ? old.name : `${formatComboKey(comboKey)}-评审组${i+1}`, capacity: cap });
-            }
-            setting.subGroups = newSub;
-            comboSettings[comboKey] = setting;
-            renderComboTable();
-        };
-        window.updateCapacity = (comboKey, idx, val) => { let cap = parseInt(val); if (isNaN(cap)) cap = 0; const setting = comboSettings[comboKey]; if (setting && setting.subGroups[idx]) setting.subGroups[idx].capacity = cap; renderComboTable(); };
-        window.updateGroupName = (comboKey, idx, val) => { const setting = comboSettings[comboKey]; if (setting && setting.subGroups[idx]) setting.subGroups[idx].name = val.trim() || `评审组${idx+1}`; renderComboTable(); };
-        window.initSubGroups = (comboKey) => { const stat = comboStats[comboKey]; const setting = comboSettings[comboKey]; const cnt = setting ? setting.groupCount : 1; const newSub = []; for (let i = 0; i < cnt; i++) { const base = Math.floor(stat.count / cnt); const rem = stat.count % cnt; const cap = base + (i < rem ? 1 : 0); newSub.push({ name: `${formatComboKey(comboKey)}-评审组${i+1}`, capacity: cap }); } comboSettings[comboKey] = { groupCount: cnt, subGroups: newSub }; renderComboTable(); };
-        
-        function rebuildByDimension() {
-            if (!projects.length) return;
-            comboStats = {};
-            projects.forEach(p => {
-                const key = getComboKey(p);
-                if (!comboStats[key]) comboStats[key] = { track: p.track, groupLevel: p.groupLevel, category: p.category || '', count: 0, projects: [] };
-                comboStats[key].count++;
-            });
-            comboSettings = {};
-            finalGroups = [];
-            groupingResult = [];
-            orderedComboKeys = null;
-            renderComboTable();
-            safeGetElement('strategySection').style.display = 'none';
-            safeGetElement('resultSection').style.display = 'none';
-            safeGetElement('groupSummary').innerHTML = '';
-        }
-        
-        function renderProjectPreview() {
-            const tbody = safeGetElement('projectPreview');
-            if (!tbody) return;
-            tbody.innerHTML = projects.map((p, i) => `<tr>
-                <td>${i+1}</td><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.school)}</td>
-                <td>${escapeHtml(p.track)}</td><td>${escapeHtml(p.groupLevel)}</td><td>${escapeHtml(p.category)}</td>
-                <td>${escapeHtml(p.region)}</td><td>${escapeHtml(p.leader)}</td><td>${escapeHtml(p.phone)}</td>
-            </tr>`).join('');
-            safeGetElement('totalProj').innerText = projects.length;
-            safeGetElement('totalSchools').innerText = new Set(projects.map(p=>p.school)).size;
-            rebuildByDimension();
-            safeGetElement('comboSection').style.display = 'block';
-            safeGetElement('strategySection').style.display = 'none';
-            safeGetElement('resultSection').style.display = 'none';
-        }
-        
-        function applyComboConfiguration() {
-            for (let [key, stat] of Object.entries(comboStats)) {
-                const setting = comboSettings[key];
-                if (!setting) { alert(`请先完成组合 ${formatComboKey(key)}`); return; }
-                const total = setting.subGroups.reduce((s, g) => s + g.capacity, 0);
-                if (total !== stat.count) { alert(`组合 ${formatComboKey(key)} 容量总和${total}不等于项目数${stat.count}`); return; }
-            }
-            const groupMap = new Map();
-            const orderedEntries = getSortedComboEntries();
-            for (let [comboKey, stat] of orderedEntries) {
-                const setting = comboSettings[comboKey];
-                for (let sg of setting.subGroups) {
-                    const groupName = sg.name.trim();
-                    if (!groupMap.has(groupName)) groupMap.set(groupName, { capacitiesByCombo: {}, allowedCombos: new Set(), id: generateId(), combosOrder: [] });
-                    const item = groupMap.get(groupName);
-                    item.capacitiesByCombo[comboKey] = (item.capacitiesByCombo[comboKey] || 0) + sg.capacity;
-                    item.allowedCombos.add(comboKey);
-                }
-            }
-            finalGroups = [];
-            for (let [name, data] of groupMap.entries()) {
-                let combosOrder = Array.from(data.allowedCombos).sort();
-                finalGroups.push({ id: data.id, name: name, capacitiesByCombo: data.capacitiesByCombo, allowedCombos: Array.from(data.allowedCombos), sortStrategy: 'random', combosOrder: combosOrder });
-            }
-            renderStrategyPanel();
-            safeGetElement('strategySection').style.display = 'block';
-            const totalCap = finalGroups.reduce((sum,g)=>sum+Object.values(g.capacitiesByCombo).reduce((a,b)=>a+b,0),0);
-            safeGetElement('groupSummary').innerHTML = `✅ 已生成 ${finalGroups.length} 个评审组，总容量 ${totalCap}`;
-            safeGetElement('resultSection').style.display = 'none';
-            groupingResult = [];
-            updateTotalGroupsHeader();
-        }
-        
-        function renderStrategyPanel() {
-            const container = safeGetElement('strategyList');
-            if (!container) return;
-            let html = '';
-            finalGroups.forEach((g, idx) => {
-                const quotaInfo = Object.entries(g.capacitiesByCombo).map(([ck, cap]) => `${formatComboKey(ck)}:${cap}`).join(' | ');
-                let subHtml = '';
-                if (g.allowedCombos.length > 1) subHtml = `<div class="mt-2 small">组合顺序<div id="subOrder_${g.id}" class="d-flex flex-wrap">${g.combosOrder.map(ck => `<span class="sub-group-item" data-combo="${escapeAttr(ck)}">${escapeHtml(formatComboKey(ck))}</span>`).join('')}</div></div>`;
-                html += `<div class="strategy-item" data-group-idx="${idx}"><div class="d-flex justify-content-between"><div><strong>${escapeHtml(g.name)}</strong> <span class="text-muted">配额: ${quotaInfo}</span></div><div><select class="form-select form-select-sm w-auto" data-group-index="${idx}" onchange="window.updateGroupStrategy(${idx}, this.value)"><option value="random" ${g.sortStrategy === 'random' ? 'selected' : ''}>🎲 完全随机打乱</option><option value="groupLevel" ${g.sortStrategy === 'groupLevel' ? 'selected' : ''}>📚 按组合顺序排序</option></select></div></div>${subHtml}</div>`;
-            });
-            container.innerHTML = html;
-            if (strategySortable) strategySortable.destroy();
-            strategySortable = new Sortable(container, { animation: 200, handle: '.strategy-item', onEnd: () => { const newOrder = Array.from(container.querySelectorAll('.strategy-item')).map(item => finalGroups[parseInt(item.dataset.groupIdx)]); finalGroups.length = 0; finalGroups.push(...newOrder); renderStrategyPanel(); } });
-            finalGroups.forEach(g => { const sub = safeGetElement(`subOrder_${g.id}`); if(sub && g.allowedCombos.length>1) new Sortable(sub, { animation: 200, handle: '.sub-group-item', onEnd: () => { g.combosOrder = Array.from(sub.children).map(ch => ch.dataset.combo); } }); });
-        }
-        window.updateGroupStrategy = (idx, val) => { if (finalGroups[idx]) finalGroups[idx].sortStrategy = val; };
-        
-        // 核心分组算法（完整保留）
-        function optimizeRandom(list, max=600){ if(list.length<=1) return { projects: list.map((p,i)=>({...p, groupIndex:i+1, isConsecutive:false})), consecutiveCount:0 }; let best=[...list], bestScore=computeConsecutiveDetails(best); for(let t=0;t<max;t++){ let cand=shuffle([...list]), sc=computeConsecutiveDetails(cand); if(sc<bestScore){ bestScore=sc; best=cand; if(bestScore===0) break; } } const res=best.map((p,idx)=>({...p, groupIndex:idx+1, isConsecutive: idx>0 && normalizeSchool(p.school)===normalizeSchool(best[idx-1].school)})); return { projects: res, consecutiveCount: bestScore }; }
-        function optimizeByGroupLevel(list, combosOrder){ if(list.length<=1) return { projects: list.map((p,i)=>({...p, groupIndex:i+1, isConsecutive:false})), consecutiveCount:0 }; const orderMap=new Map(); combosOrder.forEach((ck,idx)=>orderMap.set(ck,idx)); let sorted=[...list]; sorted.sort((a,b)=>{ const aKey=getComboKey(a), bKey=getComboKey(b); return (orderMap.get(aKey)??999)-(orderMap.get(bKey)??999); }); let bounds=[]; let start=0; for(let i=1;i<=sorted.length;i++){ if(i===sorted.length || getComboKey(sorted[i]) !== getComboKey(sorted[i-1])){ bounds.push([start,i-1]); start=i; } } for(let [l,r] of bounds){ if(l===r) continue; let sub=sorted.slice(l,r+1); let bestScore=computeConsecutiveDetails(sub), bestSub=[...sub]; for(let t=0;t<600;t++){ let cand=shuffle([...sub]), sc=computeConsecutiveDetails(cand); if(sc<bestScore){ bestScore=sc; bestSub=cand; if(bestScore===0) break; } } for(let i=l;i<=r;i++) sorted[i]=bestSub[i-l]; } const res=sorted.map((p,idx)=>({...p, groupIndex:idx+1, isConsecutive: idx>0 && normalizeSchool(p.school)===normalizeSchool(sorted[idx-1].school)})); return { projects: res, consecutiveCount: computeConsecutiveDetails(sorted) }; }
-        function modeAGrouping(groupsConfig, allProjects) { const byCombo={}; allProjects.forEach(p=>{ const ck=getComboKey(p); if(!byCombo[ck]) byCombo[ck]=[]; byCombo[ck].push(p); }); let groupData = groupsConfig.map(g=>({ name:g.name, capacitiesByCombo:{...g.capacitiesByCombo}, remainingByCombo:{...g.capacitiesByCombo}, projects:[], allowedCombos:g.allowedCombos, sortStrategy:g.sortStrategy, combosOrder:g.combosOrder||[] })); for(let comboKey of Object.keys(byCombo)){ let projs=byCombo[comboKey]; let allowed=groupData.filter(g=>g.allowedCombos.includes(comboKey)); if(allowed.length===0) throw new Error(`组合${formatComboKey(comboKey)}无可用组`); let schoolMap=new Map(); projs.forEach(p=>{ if(!schoolMap.has(p.school)) schoolMap.set(p.school,[]); schoolMap.get(p.school).push(p); }); let schools=Array.from(schoolMap.keys()).sort((a,b)=>schoolMap.get(b).length-schoolMap.get(a).length); for(let school of schools){ let schProjs=shuffle([...schoolMap.get(school)]); let available=allowed.filter(g=>!(avoidRules[g.name]||[]).includes(school)); if(available.length===0) throw new Error(`学校${school}被所有组回避`); available.sort((a,b)=>(b.remainingByCombo[comboKey]||0)-(a.remainingByCombo[comboKey]||0)); for(let i=0;i<schProjs.length;i++){ let target=available[i%available.length]; if((target.remainingByCombo[comboKey]||0)===0){ target=available.find(g=>(g.remainingByCombo[comboKey]||0)>0); if(!target) throw new Error(`容量不足 ${formatComboKey(comboKey)}`); } target.projects.push(schProjs[i]); target.remainingByCombo[comboKey]--; } } } return groupData.map(g=>{ let combined=[...g.projects]; let opt = g.sortStrategy==='groupLevel' ? optimizeByGroupLevel(combined, g.combosOrder) : optimizeRandom(combined,600); const totalCap=Object.values(g.capacitiesByCombo).reduce((a,b)=>a+b,0); return { group:g.name, projects:opt.projects, capacity:totalCap, remaining:totalCap-opt.projects.length, consecutiveCount:opt.consecutiveCount }; }); }
-        async function executeGrouping() { if (!finalGroups.length) { alert('请先生成评审组'); return; } const totalCap = finalGroups.reduce((s,g)=>s+Object.values(g.capacitiesByCombo).reduce((a,b)=>a+b,0),0); if(projects.length>totalCap){ alert(`项目总数${projects.length}超过总容量${totalCap}`); return; } const btn=safeGetElement('executeGroupingBtn'); if(btn){ btn.disabled=true; btn.innerText='分组优化中...'; } setTimeout(()=>{ try{ groupingResult = modeAGrouping(finalGroups, projects); refreshAllConsecutiveStats(); renderGroupingResultWithDrag(); safeGetElement('resultSection').style.display='block'; generateDistributionData(); if(btn){ btn.disabled=false; btn.innerText='🚀 执行智能分组'; } } catch(err){ alert('分组失败:'+err.message); if(btn){ btn.disabled=false; btn.innerText='🚀 执行智能分组'; } } },50); }
-        
-        // 统一绑定连续定位事件（头部统计数字 + 单个标记）
-        function bindConsecutiveClickEvents() {
-            // 1. 头部“同校连续 X” 点击 -> 定位到本组第一个连续标记
-            document.querySelectorAll('.consecutive-text').forEach(elem => {
-                elem.removeEventListener('click', headerClickHandler);
-                elem.addEventListener('click', headerClickHandler);
-            });
-            // 2. 每个具体的“⚠️与前同校连续”标签点击 -> 定位到对应的开头项目
-            document.querySelectorAll('.consecutive-badge').forEach(badge => {
-                badge.removeEventListener('click', badgeClickHandler);
-                badge.addEventListener('click', badgeClickHandler);
-            });
-        }
-        
-        function headerClickHandler(e) {
-            e.stopPropagation();
-            const headerSpan = e.currentTarget;
-            const card = headerSpan.closest('.result-card');
-            if (!card) return;
-            const groupContainer = card.querySelector('.result-list');
-            if (!groupContainer) return;
-            const firstBadge = groupContainer.querySelector('.consecutive-badge');
-            if (!firstBadge) return;
-            // 模拟点击该badge，复用定位逻辑
-            const groupIdx = parseInt(firstBadge.dataset.group);
-            const startIdx = parseInt(firstBadge.dataset.consecutiveStart);
-            const endIdx = parseInt(firstBadge.dataset.consecutiveEnd);
-            const items = groupContainer.querySelectorAll('.result-item');
-            if (items[startIdx] && items[endIdx]) {
-                items.forEach(item => item.classList.remove('highlight-consecutive'));
-                items[startIdx].classList.add('highlight-consecutive');
-                items[endIdx].classList.add('highlight-consecutive');
-                items[startIdx].scrollIntoView({ behavior: 'smooth', block: 'center' });
-                setTimeout(() => {
-                    items.forEach(item => item.classList.remove('highlight-consecutive'));
-                }, 2000);
-            }
-        }
-        
-        function badgeClickHandler(e) {
-            e.stopPropagation();
-            const badge = e.currentTarget;
-            const groupIdx = parseInt(badge.dataset.group);
-            const startIdx = parseInt(badge.dataset.consecutiveStart);
-            const endIdx = parseInt(badge.dataset.consecutiveEnd);
-            const groupContainer = document.querySelector(`.result-card[data-group-index="${groupIdx}"] .result-list`);
-            if (!groupContainer) return;
-            const items = groupContainer.querySelectorAll('.result-item');
-            if (items[startIdx] && items[endIdx]) {
-                items.forEach(item => item.classList.remove('highlight-consecutive'));
-                items[startIdx].classList.add('highlight-consecutive');
-                items[endIdx].classList.add('highlight-consecutive');
-                items[startIdx].scrollIntoView({ behavior: 'smooth', block: 'center' });
-                setTimeout(() => {
-                    items.forEach(item => item.classList.remove('highlight-consecutive'));
-                }, 2000);
-            }
-        }
-        
-        // 渲染结果，并绑定拖拽后的事件
-        function renderGroupingResultWithDrag() {
-            const container = safeGetElement('resultCards');
-            if(!container) return;
-            let html = '';
-            groupingResult.forEach((grp, idx) => {
-                const avoidStr = (avoidRules[grp.group] || []).length ? `<span class="avoid-badge ms-2">🚫 避开: ${avoidRules[grp.group].join(',')}</span>` : '';
-                const isConsecutiveNonZero = grp.consecutiveCount !== 0;
-                const consecutiveSpanClass = isConsecutiveNonZero ? 'text-danger' : '';
-                html += `<div class="result-card" data-group-index="${idx}">
-                            <div class="result-header">
-                                <h5 class="mb-0">${escapeHtml(grp.group)} ${avoidStr}</h5>
-                                <span>容量 ${grp.capacity} | 已分配 ${grp.projects.length} | <span class="consecutive-text ${consecutiveSpanClass}">同校连续 ${grp.consecutiveCount}</span> <span class="consecutive-info-icon" title="点击可定位到第一个连续项目">ⓘ</span></span>
-                            </div>
-                            <div class="result-list" id="groupList_${idx}">`;
-                grp.projects.forEach((p, i) => {
-                    const consecutiveClassItem = p.isConsecutive ? 'consecutive-highlight' : '';
-                    const consecutiveClickable = p.isConsecutive ? `<span class="consecutive-badge" data-group="${idx}" data-consecutive-start="${i-1}" data-consecutive-end="${i}" style="cursor:pointer;">⚠️与前同校连续</span>` : '';
-                    html += `<div class="result-item ${consecutiveClassItem}" data-project-idx="${i}" data-school="${escapeAttr(p.school)}">
-                                <div class="result-index">${p.groupIndex}</div>
-                                <div class="result-name">${escapeHtml(p.name)}</div>
-                                <div class="result-detail"><span>🏷️ ${escapeHtml(p.track)}</span><span>📚 ${escapeHtml(p.groupLevel)}</span><span>📂 ${escapeHtml(p.category)}</span></div>
-                                <div class="result-school"><span class="badge bg-secondary">${escapeHtml(p.school)}</span></div>
-                                <div class="result-status">${consecutiveClickable}</div>
-                            </div>`;
-                });
-                html += `</div></div>`;
-            });
-            container.innerHTML = html;
-            bindConsecutiveClickEvents();   // 绑定头部和单个标记的点击事件
-            bindDragAndUpdate();            // 绑定拖拽排序（局部更新，不重置界面）
-        }
-        
-        // 拖拽排序后局部更新（保持界面不重置，并重新绑定事件）
-        function bindDragAndUpdate() {
-            sortableInstances.forEach(s => s.destroy());
-            sortableInstances = [];
-            groupingResult.forEach((grp, idx) => {
-                const listEl = safeGetElement(`groupList_${idx}`);
-                if (!listEl) return;
-                const sortable = new Sortable(listEl, {
-                    animation: 200,
-                    onEnd: () => {
-                        // 更新数据模型
-                        const newOrder = [];
-                        const children = listEl.querySelectorAll('.result-item');
-                        children.forEach(child => {
-                            const oldIdx = parseInt(child.getAttribute('data-project-idx'));
-                            newOrder.push(grp.projects[oldIdx]);
-                        });
-                        grp.projects = newOrder;
-                        // 重新计算连续标记和序号（不重新渲染DOM，只更新显示）
-                        let consecutive = 0;
-                        grp.projects.forEach((p, pos) => {
-                            p.groupIndex = pos + 1;
-                            const isCons = pos > 0 && normalizeSchool(p.school) === normalizeSchool(grp.projects[pos-1].school);
-                            p.isConsecutive = isCons;
-                            if (isCons) consecutive++;
-                            // 更新对应DOM元素
-                            const itemDiv = children[pos];
-                            if (itemDiv) {
-                                itemDiv.querySelector('.result-index').innerText = p.groupIndex;
-                                const statusSpan = itemDiv.querySelector('.result-status');
-                                if (isCons) {
-                                    statusSpan.innerHTML = `<span class="consecutive-badge" data-group="${idx}" data-consecutive-start="${pos-1}" data-consecutive-end="${pos}" style="cursor:pointer;">⚠️与前同校连续</span>`;
-                                    itemDiv.classList.add('consecutive-highlight');
-                                } else {
-                                    statusSpan.innerHTML = '';
-                                    itemDiv.classList.remove('consecutive-highlight');
-                                }
-                                itemDiv.setAttribute('data-project-idx', pos);
-                            }
-                        });
-                        grp.consecutiveCount = consecutive;
-                        // 更新头部连续统计数字
-                        const headerSpan = listEl.closest('.result-card').querySelector('.result-header .consecutive-text');
-                        if (headerSpan) {
-                            headerSpan.innerText = `同校连续 ${consecutive}`;
-                            if (consecutive !== 0) headerSpan.classList.add('text-danger');
-                            else headerSpan.classList.remove('text-danger');
+            function renderComboTable() {
+                const container = safeGetElement('comboConfigTable');
+                if (!container) return;
+                const isThreeDim = (dimensionMode === 'track-group-category');
+                let html = `<table class="combo-table" id="comboMainTable"><thead><tr>`;
+                html += `<th style="width:30px">⋮⋮</th><th>赛道</th><th>参赛组别</th>`;
+                if (isThreeDim) html += `<th>参赛类别</th>`;
+                html += `<th>项目数</th><th>评审组数量</th><th>每组容量</th><th>评审组名称</th><th>操作</th></tr</thead><tbody id="comboTableBody">`;
+                
+                const sortedEntries = getSortedComboEntries();
+                for (let [key, stat] of sortedEntries) {
+                    const parts = parseComboParts(key);
+                    const setting = comboSettings[key] || { groupCount: 1, subGroups: [] };
+                    let groupCount = setting.groupCount;
+                    if (setting.subGroups.length !== groupCount) {
+                        const newSub = [];
+                        for (let i = 0; i < groupCount; i++) {
+                            const base = Math.floor(stat.count / groupCount);
+                            const rem = stat.count % groupCount;
+                            const cap = base + (i < rem ? 1 : 0);
+                            newSub.push({ name: `${formatComboKey(key)}-评审组${i+1}`, capacity: cap });
                         }
-                        // 重新绑定点击事件（新生成的badge和头部）
-                        bindConsecutiveClickEvents();
-                        // 刷新全局统计数据
-                        refreshAllConsecutiveStats();
+                        setting.subGroups = newSub;
+                        comboSettings[key] = setting;
+                    }
+                    const rowspan = setting.subGroups.length;
+                    for (let i = 0; i < rowspan; i++) {
+                        const sg = setting.subGroups[i];
+                        html += `<tr data-combo-key="${escapeAttr(key)}">`;
+                        if (i === 0) {
+                            html += `<td rowspan="${rowspan}" class="drag-handle-cell">⋮⋮</td>`;
+                            html += `<td rowspan="${rowspan}">${escapeHtml(parts.track)}</td>`;
+                            html += `<td rowspan="${rowspan}">${escapeHtml(parts.group)}</td>`;
+                            if (isThreeDim) html += `<td rowspan="${rowspan}">${escapeHtml(parts.category || '—')}</td>`;
+                            html += `<td rowspan="${rowspan}">${stat.count}</td>`;
+                            html += `<td rowspan="${rowspan}"><input type="number" min="1" max="${stat.count}" value="${groupCount}" class="form-control form-control-sm" style="width:90px" data-combo="${escapeAttr(key)}" onchange="window.changeGroupCount('${escapeAttr(key)}',this.value)"></td>`;
+                        }
+                        html += `<td><input type="number" class="capacity-input form-control form-control-sm" value="${sg.capacity}" min="1" max="${stat.count}" data-combo="${escapeAttr(key)}" data-idx="${i}" onchange="window.updateCapacity('${escapeAttr(key)}',${i},this.value)"></td>`;
+                        html += `<td><input type="text" class="group-name-input form-control form-control-sm" value="${escapeAttr(sg.name)}" data-combo="${escapeAttr(key)}" data-idx="${i}" onchange="window.updateGroupName('${escapeAttr(key)}',${i},this.value)"></td>`;
+                        if (i === 0) {
+                            html += `<td rowspan="${rowspan}"><button class="btn btn-sm btn-outline-secondary" onclick="window.initSubGroups('${escapeAttr(key)}')">重置</button></td>`;
+                        }
+                        html += `</tr>`;
+                    }
+                    const totalCap = setting.subGroups.reduce((s, g) => s + g.capacity, 0);
+                    if (totalCap !== stat.count) html += `<tr class="table-danger"><td colspan="${isThreeDim ? 8 : 7}"><span class="text-danger">⚠️ 容量总和 ${totalCap} ≠ 项目总数 ${stat.count}</span></td></tr>`;
+                }
+                html += `</tbody></table>`;
+                container.innerHTML = html;
+                updateTotalGroupsHeader();
+                
+                const tbody = document.getElementById('comboTableBody');
+                if (tbody && comboTableSortable) comboTableSortable.destroy();
+                if (tbody) {
+                    comboTableSortable = new Sortable(tbody, {
+                        animation: 200,
+                        handle: '.drag-handle-cell',
+                        onEnd: function() {
+                            const rows = tbody.querySelectorAll('tr[data-combo-key]');
+                            const newOrderKeys = [];
+                            rows.forEach(row => {
+                                const key = row.getAttribute('data-combo-key');
+                                if (key && !newOrderKeys.includes(key)) newOrderKeys.push(key);
+                            });
+                            orderedComboKeys = newOrderKeys;
+                            renderComboTable();
+                        }
+                    });
+                }
+            }
+            
+            window.changeGroupCount = (comboKey, val) => {
+                let cnt = Math.max(1, parseInt(val) || 1);
+                const stat = comboStats[comboKey];
+                if (cnt > stat.count) cnt = stat.count;
+                let setting = comboSettings[comboKey] || { groupCount: 1, subGroups: [] };
+                setting.groupCount = cnt;
+                const newSub = [];
+                for (let i = 0; i < cnt; i++) {
+                    const base = Math.floor(stat.count / cnt);
+                    const rem = stat.count % cnt;
+                    const cap = base + (i < rem ? 1 : 0);
+                    const old = setting.subGroups[i];
+                    newSub.push({ name: old ? old.name : `${formatComboKey(comboKey)}-评审组${i+1}`, capacity: cap });
+                }
+                setting.subGroups = newSub;
+                comboSettings[comboKey] = setting;
+                renderComboTable();
+            };
+            window.updateCapacity = (comboKey, idx, val) => { let cap = parseInt(val); if (isNaN(cap)) cap = 0; const setting = comboSettings[comboKey]; if (setting && setting.subGroups[idx]) setting.subGroups[idx].capacity = cap; renderComboTable(); };
+            window.updateGroupName = (comboKey, idx, val) => { const setting = comboSettings[comboKey]; if (setting && setting.subGroups[idx]) setting.subGroups[idx].name = val.trim() || `评审组${idx+1}`; renderComboTable(); };
+            window.initSubGroups = (comboKey) => { const stat = comboStats[comboKey]; const setting = comboSettings[comboKey]; const cnt = setting ? setting.groupCount : 1; const newSub = []; for (let i = 0; i < cnt; i++) { const base = Math.floor(stat.count / cnt); const rem = stat.count % cnt; const cap = base + (i < rem ? 1 : 0); newSub.push({ name: `${formatComboKey(comboKey)}-评审组${i+1}`, capacity: cap }); } comboSettings[comboKey] = { groupCount: cnt, subGroups: newSub }; renderComboTable(); };
+            
+            function rebuildByDimension() {
+                if (!projects.length) return;
+                comboStats = {};
+                projects.forEach(p => {
+                    const key = getComboKey(p);
+                    if (!comboStats[key]) comboStats[key] = { track: p.track, groupLevel: p.groupLevel, category: p.category || '', count: 0, projects: [] };
+                    comboStats[key].count++;
+                });
+                comboSettings = {};
+                finalGroups = [];
+                groupingResult = [];
+                orderedComboKeys = null;
+                renderComboTable();
+                safeGetElement('strategySection').style.display = 'none';
+                safeGetElement('resultSection').style.display = 'none';
+                safeGetElement('groupSummary').innerHTML = '';
+            }
+            
+            function renderProjectPreview() {
+                const tbody = safeGetElement('projectPreview');
+                if (!tbody) return;
+                tbody.innerHTML = projects.map((p, i) => `<tr>
+                    <td>${i+1}</td><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.school)}</td>
+                    <td>${escapeHtml(p.track)}</td><td>${escapeHtml(p.groupLevel)}</td><td>${escapeHtml(p.category)}</td>
+                    <td>${escapeHtml(p.region)}</td><td>${escapeHtml(p.leader)}</td><td>${escapeHtml(p.phone)}</td>
+                </tr>`).join('');
+                safeGetElement('totalProj').innerText = projects.length;
+                safeGetElement('totalSchools').innerText = new Set(projects.map(p=>p.school)).size;
+                rebuildByDimension();
+                safeGetElement('comboSection').style.display = 'block';
+                safeGetElement('strategySection').style.display = 'none';
+                safeGetElement('resultSection').style.display = 'none';
+            }
+            
+            function applyComboConfiguration() {
+                for (let [key, stat] of Object.entries(comboStats)) {
+                    const setting = comboSettings[key];
+                    if (!setting) { alert(`请先完成组合 ${formatComboKey(key)}`); return; }
+                    const total = setting.subGroups.reduce((s, g) => s + g.capacity, 0);
+                    if (total !== stat.count) { alert(`组合 ${formatComboKey(key)} 容量总和${total}不等于项目数${stat.count}`); return; }
+                }
+                const groupMap = new Map();
+                const orderedEntries = getSortedComboEntries();
+                for (let [comboKey, stat] of orderedEntries) {
+                    const setting = comboSettings[comboKey];
+                    for (let sg of setting.subGroups) {
+                        const groupName = sg.name.trim();
+                        if (!groupMap.has(groupName)) groupMap.set(groupName, { capacitiesByCombo: {}, allowedCombos: new Set(), id: generateId(), combosOrder: [] });
+                        const item = groupMap.get(groupName);
+                        item.capacitiesByCombo[comboKey] = (item.capacitiesByCombo[comboKey] || 0) + sg.capacity;
+                        item.allowedCombos.add(comboKey);
+                    }
+                }
+                finalGroups = [];
+                for (let [name, data] of groupMap.entries()) {
+                    let combosOrder = Array.from(data.allowedCombos).sort();
+                    finalGroups.push({ id: data.id, name: name, capacitiesByCombo: data.capacitiesByCombo, allowedCombos: Array.from(data.allowedCombos), sortStrategy: 'random', combosOrder: combosOrder });
+                }
+                renderStrategyPanel();
+                safeGetElement('strategySection').style.display = 'block';
+                const totalCap = finalGroups.reduce((sum,g)=>sum+Object.values(g.capacitiesByCombo).reduce((a,b)=>a+b,0),0);
+                safeGetElement('groupSummary').innerHTML = `✅ 已生成 ${finalGroups.length} 个评审组，总容量 ${totalCap}`;
+                safeGetElement('resultSection').style.display = 'none';
+                groupingResult = [];
+                updateTotalGroupsHeader();
+            }
+            
+            function renderStrategyPanel() {
+                const container = safeGetElement('strategyList');
+                if (!container) return;
+                let html = '';
+                finalGroups.forEach((g, idx) => {
+                    const quotaInfo = Object.entries(g.capacitiesByCombo).map(([ck, cap]) => `${formatComboKey(ck)}:${cap}`).join(' | ');
+                    let subHtml = '';
+                    if (g.allowedCombos.length > 1) subHtml = `<div class="mt-2 small">组合顺序<div id="subOrder_${g.id}" class="d-flex flex-wrap">${g.combosOrder.map(ck => `<span class="sub-group-item" data-combo="${escapeAttr(ck)}">${escapeHtml(formatComboKey(ck))}</span>`).join('')}</div></div>`;
+                    html += `<div class="strategy-item" data-group-idx="${idx}"><div class="d-flex justify-content-between"><div><strong>${escapeHtml(g.name)}</strong> <span class="text-muted">配额: ${quotaInfo}</span></div><div><select class="form-select form-select-sm w-auto" data-group-index="${idx}" onchange="window.updateGroupStrategy(${idx}, this.value)"><option value="random" ${g.sortStrategy === 'random' ? 'selected' : ''}>🎲 完全随机打乱</option><option value="groupLevel" ${g.sortStrategy === 'groupLevel' ? 'selected' : ''}>📚 按组合顺序排序</option></select></div></div>${subHtml}</div>`;
+                });
+                container.innerHTML = html;
+                if (strategySortable) strategySortable.destroy();
+                strategySortable = new Sortable(container, { animation: 200, handle: '.strategy-item', onEnd: () => { const newOrder = Array.from(container.querySelectorAll('.strategy-item')).map(item => finalGroups[parseInt(item.dataset.groupIdx)]); finalGroups.length = 0; finalGroups.push(...newOrder); renderStrategyPanel(); } });
+                finalGroups.forEach(g => { const sub = safeGetElement(`subOrder_${g.id}`); if(sub && g.allowedCombos.length>1) new Sortable(sub, { animation: 200, handle: '.sub-group-item', onEnd: () => { g.combosOrder = Array.from(sub.children).map(ch => ch.dataset.combo); } }); });
+            }
+            window.updateGroupStrategy = (idx, val) => { if (finalGroups[idx]) finalGroups[idx].sortStrategy = val; };
+            
+            function optimizeRandom(list, max=600){ if(list.length<=1) return { projects: list.map((p,i)=>({...p, groupIndex:i+1, isConsecutive:false})), consecutiveCount:0 }; let best=[...list], bestScore=computeConsecutiveDetails(best); for(let t=0;t<max;t++){ let cand=shuffle([...list]), sc=computeConsecutiveDetails(cand); if(sc<bestScore){ bestScore=sc; best=cand; if(bestScore===0) break; } } const res=best.map((p,idx)=>({...p, groupIndex:idx+1, isConsecutive: idx>0 && normalizeSchool(p.school)===normalizeSchool(best[idx-1].school)})); return { projects: res, consecutiveCount: bestScore }; }
+            function optimizeByGroupLevel(list, combosOrder){ if(list.length<=1) return { projects: list.map((p,i)=>({...p, groupIndex:i+1, isConsecutive:false})), consecutiveCount:0 }; const orderMap=new Map(); combosOrder.forEach((ck,idx)=>orderMap.set(ck,idx)); let sorted=[...list]; sorted.sort((a,b)=>{ const aKey=getComboKey(a), bKey=getComboKey(b); return (orderMap.get(aKey)??999)-(orderMap.get(bKey)??999); }); let bounds=[]; let start=0; for(let i=1;i<=sorted.length;i++){ if(i===sorted.length || getComboKey(sorted[i]) !== getComboKey(sorted[i-1])){ bounds.push([start,i-1]); start=i; } } for(let [l,r] of bounds){ if(l===r) continue; let sub=sorted.slice(l,r+1); let bestScore=computeConsecutiveDetails(sub), bestSub=[...sub]; for(let t=0;t<600;t++){ let cand=shuffle([...sub]), sc=computeConsecutiveDetails(cand); if(sc<bestScore){ bestScore=sc; bestSub=cand; if(bestScore===0) break; } } for(let i=l;i<=r;i++) sorted[i]=bestSub[i-l]; } const res=sorted.map((p,idx)=>({...p, groupIndex:idx+1, isConsecutive: idx>0 && normalizeSchool(p.school)===normalizeSchool(sorted[idx-1].school)})); return { projects: res, consecutiveCount: computeConsecutiveDetails(sorted) }; }
+            function modeAGrouping(groupsConfig, allProjects) { const byCombo={}; allProjects.forEach(p=>{ const ck=getComboKey(p); if(!byCombo[ck]) byCombo[ck]=[]; byCombo[ck].push(p); }); let groupData = groupsConfig.map(g=>({ name:g.name, capacitiesByCombo:{...g.capacitiesByCombo}, remainingByCombo:{...g.capacitiesByCombo}, projects:[], allowedCombos:g.allowedCombos, sortStrategy:g.sortStrategy, combosOrder:g.combosOrder||[] })); for(let comboKey of Object.keys(byCombo)){ let projs=byCombo[comboKey]; let allowed=groupData.filter(g=>g.allowedCombos.includes(comboKey)); if(allowed.length===0) throw new Error(`组合${formatComboKey(comboKey)}无可用组`); let schoolMap=new Map(); projs.forEach(p=>{ if(!schoolMap.has(p.school)) schoolMap.set(p.school,[]); schoolMap.get(p.school).push(p); }); let schools=Array.from(schoolMap.keys()).sort((a,b)=>schoolMap.get(b).length-schoolMap.get(a).length); for(let school of schools){ let schProjs=shuffle([...schoolMap.get(school)]); let available=allowed.filter(g=>!(avoidRules[g.name]||[]).includes(school)); if(available.length===0) throw new Error(`学校${school}被所有组回避`); available.sort((a,b)=>(b.remainingByCombo[comboKey]||0)-(a.remainingByCombo[comboKey]||0)); for(let i=0;i<schProjs.length;i++){ let target=available[i%available.length]; if((target.remainingByCombo[comboKey]||0)===0){ target=available.find(g=>(g.remainingByCombo[comboKey]||0)>0); if(!target) throw new Error(`容量不足 ${formatComboKey(comboKey)}`); } target.projects.push(schProjs[i]); target.remainingByCombo[comboKey]--; } } } return groupData.map(g=>{ let combined=[...g.projects]; let opt = g.sortStrategy==='groupLevel' ? optimizeByGroupLevel(combined, g.combosOrder) : optimizeRandom(combined,600); const totalCap=Object.values(g.capacitiesByCombo).reduce((a,b)=>a+b,0); return { group:g.name, projects:opt.projects, capacity:totalCap, remaining:totalCap-opt.projects.length, consecutiveCount:opt.consecutiveCount }; }); }
+            async function executeGrouping() { if (!finalGroups.length) { alert('请先生成评审组'); return; } const totalCap = finalGroups.reduce((s,g)=>s+Object.values(g.capacitiesByCombo).reduce((a,b)=>a+b,0),0); if(projects.length>totalCap){ alert(`项目总数${projects.length}超过总容量${totalCap}`); return; } const btn=safeGetElement('executeGroupingBtn'); if(btn){ btn.disabled=true; btn.innerText='分组优化中...'; } setTimeout(()=>{ try{ groupingResult = modeAGrouping(finalGroups, projects); refreshAllConsecutiveStats(); renderGroupingResultWithDrag(); safeGetElement('resultSection').style.display='block'; generateDistributionData(); if(btn){ btn.disabled=false; btn.innerText='🚀 执行智能分组'; } } catch(err){ alert('分组失败:'+err.message); if(btn){ btn.disabled=false; btn.innerText='🚀 执行智能分组'; } } },50); }
+            
+            function bindConsecutiveClickEvents() {
+                document.querySelectorAll('.consecutive-text').forEach(elem => {
+                    elem.removeEventListener('click', headerClickHandler);
+                    elem.addEventListener('click', headerClickHandler);
+                });
+                document.querySelectorAll('.consecutive-badge').forEach(badge => {
+                    badge.removeEventListener('click', badgeClickHandler);
+                    badge.addEventListener('click', badgeClickHandler);
+                });
+            }
+            
+            function headerClickHandler(e) {
+                e.stopPropagation();
+                const headerSpan = e.currentTarget;
+                const card = headerSpan.closest('.result-card');
+                if (!card) return;
+                const groupContainer = card.querySelector('.result-list');
+                if (!groupContainer) return;
+                const firstBadge = groupContainer.querySelector('.consecutive-badge');
+                if (!firstBadge) return;
+                const groupIdx = parseInt(firstBadge.dataset.group);
+                const startIdx = parseInt(firstBadge.dataset.consecutiveStart);
+                const endIdx = parseInt(firstBadge.dataset.consecutiveEnd);
+                const items = groupContainer.querySelectorAll('.result-item');
+                if (items[startIdx] && items[endIdx]) {
+                    items.forEach(item => item.classList.remove('highlight-consecutive'));
+                    items[startIdx].classList.add('highlight-consecutive');
+                    items[endIdx].classList.add('highlight-consecutive');
+                    items[startIdx].scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    setTimeout(() => {
+                        items.forEach(item => item.classList.remove('highlight-consecutive'));
+                    }, 2000);
+                }
+            }
+            
+            function badgeClickHandler(e) {
+                e.stopPropagation();
+                const badge = e.currentTarget;
+                const groupIdx = parseInt(badge.dataset.group);
+                const startIdx = parseInt(badge.dataset.consecutiveStart);
+                const endIdx = parseInt(badge.dataset.consecutiveEnd);
+                const groupContainer = document.querySelector(`.result-card[data-group-index="${groupIdx}"] .result-list`);
+                if (!groupContainer) return;
+                const items = groupContainer.querySelectorAll('.result-item');
+                if (items[startIdx] && items[endIdx]) {
+                    items.forEach(item => item.classList.remove('highlight-consecutive'));
+                    items[startIdx].classList.add('highlight-consecutive');
+                    items[endIdx].classList.add('highlight-consecutive');
+                    items[startIdx].scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    setTimeout(() => {
+                        items.forEach(item => item.classList.remove('highlight-consecutive'));
+                    }, 2000);
+                }
+            }
+            
+            function renderGroupingResultWithDrag() {
+                const container = safeGetElement('resultCards');
+                if(!container) return;
+                let html = '';
+                groupingResult.forEach((grp, idx) => {
+                    const avoidStr = (avoidRules[grp.group] || []).length ? `<span class="avoid-badge ms-2">🚫 避开: ${avoidRules[grp.group].join(',')}</span>` : '';
+                    const isConsecutiveNonZero = grp.consecutiveCount !== 0;
+                    const consecutiveSpanClass = isConsecutiveNonZero ? 'text-danger' : '';
+                    html += `<div class="result-card" data-group-index="${idx}">
+                                <div class="result-header">
+                                    <h5 class="mb-0">${escapeHtml(grp.group)} ${avoidStr}</h5>
+                                    <span>容量 ${grp.capacity} | 已分配 ${grp.projects.length} | <span class="consecutive-text ${consecutiveSpanClass}">同校连续 ${grp.consecutiveCount}</span> <span class="consecutive-info-icon" title="点击可定位到第一个连续项目">ⓘ</span></span>
+                                </div>
+                                <div class="result-list" id="groupList_${idx}">`;
+                    grp.projects.forEach((p, i) => {
+                        const consecutiveClassItem = p.isConsecutive ? 'consecutive-highlight' : '';
+                        const consecutiveClickable = p.isConsecutive ? `<span class="consecutive-badge" data-group="${idx}" data-consecutive-start="${i-1}" data-consecutive-end="${i}" style="cursor:pointer;">⚠️与前同校连续</span>` : '';
+                        html += `<div class="result-item ${consecutiveClassItem}" data-project-idx="${i}" data-school="${escapeAttr(p.school)}">
+                                    <div class="result-index">${p.groupIndex}</div>
+                                    <div class="result-name">${escapeHtml(p.name)}</div>
+                                    <div class="result-detail"><span>🏷️ ${escapeHtml(p.track)}</span><span>📚 ${escapeHtml(p.groupLevel)}</span><span>📂 ${escapeHtml(p.category)}</span></div>
+                                    <div class="result-school"><span class="badge bg-secondary">${escapeHtml(p.school)}</span></div>
+                                    <div class="result-status">${consecutiveClickable}</div>
+                                </div>`;
+                    });
+                    html += `</div></div>`;
+                });
+                container.innerHTML = html;
+                bindConsecutiveClickEvents();
+                bindDragAndUpdate();
+            }
+            
+            function bindDragAndUpdate() {
+                sortableInstances.forEach(s => s.destroy());
+                sortableInstances = [];
+                groupingResult.forEach((grp, idx) => {
+                    const listEl = safeGetElement(`groupList_${idx}`);
+                    if (!listEl) return;
+                    const sortable = new Sortable(listEl, {
+                        animation: 200,
+                        onEnd: () => {
+                            const newOrder = [];
+                            const children = listEl.querySelectorAll('.result-item');
+                            children.forEach(child => {
+                                const oldIdx = parseInt(child.getAttribute('data-project-idx'));
+                                newOrder.push(grp.projects[oldIdx]);
+                            });
+                            grp.projects = newOrder;
+                            let consecutive = 0;
+                            grp.projects.forEach((p, pos) => {
+                                p.groupIndex = pos + 1;
+                                const isCons = pos > 0 && normalizeSchool(p.school) === normalizeSchool(grp.projects[pos-1].school);
+                                p.isConsecutive = isCons;
+                                if (isCons) consecutive++;
+                                const itemDiv = children[pos];
+                                if (itemDiv) {
+                                    itemDiv.querySelector('.result-index').innerText = p.groupIndex;
+                                    const statusSpan = itemDiv.querySelector('.result-status');
+                                    if (isCons) {
+                                        statusSpan.innerHTML = `<span class="consecutive-badge" data-group="${idx}" data-consecutive-start="${pos-1}" data-consecutive-end="${pos}" style="cursor:pointer;">⚠️与前同校连续</span>`;
+                                        itemDiv.classList.add('consecutive-highlight');
+                                    } else {
+                                        statusSpan.innerHTML = '';
+                                        itemDiv.classList.remove('consecutive-highlight');
+                                    }
+                                    itemDiv.setAttribute('data-project-idx', pos);
+                                }
+                            });
+                            grp.consecutiveCount = consecutive;
+                            const headerSpan = listEl.closest('.result-card').querySelector('.result-header .consecutive-text');
+                            if (headerSpan) {
+                                headerSpan.innerText = `同校连续 ${consecutive}`;
+                                if (consecutive !== 0) headerSpan.classList.add('text-danger');
+                                else headerSpan.classList.remove('text-danger');
+                            }
+                            bindConsecutiveClickEvents();
+                            refreshAllConsecutiveStats();
+                        }
+                    });
+                    sortableInstances.push(sortable);
+                });
+            }
+            
+            function generateDistributionData() { schoolTotal={}; projects.forEach(p=>{ schoolTotal[p.school]=(schoolTotal[p.school]||0)+1; }); let dist={}; for(let grp of groupingResult) for(let p of grp.projects){ if(!dist[p.school]) dist[p.school]={}; dist[p.school][grp.group]=(dist[p.school][grp.group]||0)+1; } distributionData=dist; modifiedSchools.clear(); }
+            function showDistributionModal() { if (!groupingResult.length) { alert('请先执行分组'); return; } const modalElem = document.getElementById('distModal'); currentDistModal = new bootstrap.Modal(modalElem, { backdrop: 'static' }); renderDistTableContent(); currentDistModal.show(); }
+            function renderDistTableContent() { const container = safeGetElement('distModalBody'); if(!container) return; const schools = Object.keys(schoolTotal).sort((a,b)=>schoolTotal[b]-schoolTotal[a]); let html = `<div class="distribution-wrapper"><table class="dist-table" id="distMainTable"><thead><tr><th class="school-col">高校名称</th>`; finalGroups.forEach(g => { const totalCap = Object.values(g.capacitiesByCombo).reduce((a,b)=>a+b,0); html+=`<th>${escapeHtml(g.name)}<br><span class="group-setting">容量:${totalCap}</span></th>`; }); html+=`<th>高校总计</th></tr></thead><tbody>`; for(let school of schools){ let rowTotal=0; let cells=''; for(let g of finalGroups){ let val=distributionData[school]?.[g.name]||0; rowTotal+=val; cells+=`<td><input type="number" class="editable-number" value="${val}" data-school="${escapeAttr(school)}" data-group="${escapeAttr(g.name)}"></td>`; } const rowClass=(modifiedSchools.has(school) || rowTotal!==schoolTotal[school])?'modified-row':''; const errorSpan=(rowTotal!==schoolTotal[school])?`<span class="validation-tip">总数不符</span>`:''; html+=`<tr class="${rowClass}" data-school="${escapeAttr(school)}"><td class="school-col">${escapeHtml(school)}</td>${cells}<td class="${rowTotal!==schoolTotal[school]?'school-imbalance':''}">${rowTotal} (原始:${schoolTotal[school]})${errorSpan}</td></tr>`; } html+=`</tbody><tfoot><tr><th>合计</th>`; let grandTotal=0; for(let g of finalGroups){ const groupTotal=schools.reduce((sum,s)=>sum+(distributionData[s]?.[g.name]||0),0); const totalCap=Object.values(g.capacitiesByCombo).reduce((a,b)=>a+b,0); grandTotal+=groupTotal; let cls='',tip=''; if(groupTotal>totalCap){ cls='school-imbalance'; tip=`<span class="validation-tip">超出容量</span>`; } else if(groupTotal<totalCap && groupTotal>0){ cls='school-insufficient'; tip=`<span class="insufficient-tip">分配不足</span>`; } html+=`<th class="${cls}">${groupTotal} / ${totalCap}${tip}</th>`; } html+=`<th>${grandTotal}</th></tr></tfoot></table></div>`; container.innerHTML=html; const table = document.getElementById('distMainTable'); if(table) table.querySelectorAll('.editable-number').forEach(input => { input.removeEventListener('change', distInputHandler); input.addEventListener('change', distInputHandler); }); }
+            function distInputHandler(e) { const input=e.target; const school=input.dataset.school; const group=input.dataset.group; let newVal=parseInt(input.value); if(isNaN(newVal)) newVal=0; if(!distributionData[school]) distributionData[school]={}; distributionData[school][group]=newVal; modifiedSchools.add(school); renderDistTableContent(); }
+            function applyDistributionAdjustment() { if (!confirm('应用调整并重新分组？')) return; let errors=[]; const schools=Object.keys(schoolTotal); for(let school of schools){ let rowTotal=finalGroups.reduce((sum,g)=>sum+(distributionData[school]?.[g.name]||0),0); if(rowTotal!==schoolTotal[school]) errors.push(`${school} 总数不符`); } for(let g of finalGroups){ const totalCap=Object.values(g.capacitiesByCombo).reduce((a,b)=>a+b,0); const groupTotal=schools.reduce((sum,s)=>sum+(distributionData[s]?.[g.name]||0),0); if(groupTotal>totalCap) errors.push(`${g.name} 超出容量`); } for(let school of schools) for(let g of finalGroups) if((distributionData[school]?.[g.name]||0)>0 && (avoidRules[g.name]||[]).includes(school)) errors.push(`回避冲突：${school} 不能分配到 ${g.name}`); if(errors.length){ alert('校验失败：\n'+errors.join('\n')); return; } forceCloseModal(document.getElementById('distModal')); executeGrouping(); }
+            function clearModifiedMark() { modifiedSchools.clear(); renderDistTableContent(); }
+            function downloadResult() { if(!groupingResult.length){alert('请先执行分组'); return;} const headers=['项目名称','所属学校','赛道','参赛组别','参赛类别','所属地区','负责人姓名','负责人手机号','评审组','组内编号','是否同校连续']; const rows=[headers]; for(let grp of groupingResult) for(let p of grp.projects) rows.push([p.name,p.school,p.track,p.groupLevel,p.category,p.region||'',p.leader||'',p.phone||'',grp.group,p.groupIndex,p.isConsecutive?'是':'']); const ws=XLSX.utils.aoa_to_sheet(rows); const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'分组结果'); XLSX.writeFile(wb,`分组结果_${new Date().toISOString().slice(0,19)}.xlsx`); }
+            
+            safeGetElement('downloadTemplateBtn')?.addEventListener('click', ()=>{
+                const data=[['赛道','参赛组别','参赛类别','项目名称','所属地区','所属学校','负责人姓名','负责人手机号'],['高教主赛道','本科生创意组','新工科类','智能机器人','华东','清华大学','张一','138001']];
+                const ws=XLSX.utils.aoa_to_sheet(data); ws['!cols']=[{wch:14},{wch:12},{wch:12},{wch:28},{wch:10},{wch:18},{wch:12},{wch:12}];
+                const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'项目模板'); XLSX.writeFile(wb,'项目导入模板V9.xlsx');
+            });
+            safeGetElement('projectFile')?.addEventListener('change', function(e) {
+                const file=e.target.files[0]; if(!file) return;
+                const reader=new FileReader();
+                reader.onload=ev=>{
+                    try{
+                        const data=new Uint8Array(ev.target.result);
+                        const wb=XLSX.read(data,{type:'array'});
+                        const ws=wb.Sheets[wb.SheetNames[0]];
+                        const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:true});
+                        if(rows.length<2) throw new Error('无数据');
+                        const header=rows[0];
+                        const idx={track:header.findIndex(c=>c&&c.includes('赛道')), group:header.findIndex(c=>c&&c.includes('参赛组别')), cat:header.findIndex(c=>c&&c.includes('参赛类别')), name:header.findIndex(c=>c&&c.includes('项目名称')), region:header.findIndex(c=>c&&c.includes('地区')), school:header.findIndex(c=>c&&c.includes('所属学校')), leader:header.findIndex(c=>c&&c.includes('负责人姓名')), phone:header.findIndex(c=>c&&c.includes('负责人手机号'))};
+                        const newProjects=[];
+                        for(let i=1;i<rows.length;i++){ const row=rows[i]; if(!row||row.length<2) continue;
+                            const track=idx.track>=0?(row[idx.track]||'').toString().trim():''; const groupLevel=idx.group>=0?(row[idx.group]||'').toString().trim():''; const category=idx.cat>=0?(row[idx.cat]||'').toString().trim():''; const name=idx.name>=0?(row[idx.name]||'').toString().trim():''; const region=idx.region>=0?(row[idx.region]||'').toString().trim():''; const school=idx.school>=0?(row[idx.school]||'').toString().trim():''; const leader=idx.leader>=0?(row[idx.leader]||'').toString().trim():''; const phone=idx.phone>=0?(row[idx.phone]||'').toString().trim():'';
+                            if(name&&school) newProjects.push({name,school,track,groupLevel,category,region,leader,phone});
+                        }
+                        if(!newProjects.length) throw new Error('无有效项目');
+                        projects=newProjects; renderProjectPreview();
+                    }catch(err){ alert('导入失败:'+err.message); this.value=''; }
+                }; reader.readAsArrayBuffer(file);
+            });
+            function setDimension(mode){ dimensionMode=mode; document.getElementById('dimensionTrackGroupBtn').classList.toggle('active',mode==='track-group'); document.getElementById('dimensionTrackGroupCatBtn').classList.toggle('active',mode==='track-group-category'); if(projects.length){ rebuildByDimension(); safeGetElement('strategySection').style.display='none'; safeGetElement('resultSection').style.display='none'; } }
+            safeGetElement('dimensionTrackGroupBtn')?.addEventListener('click',()=>setDimension('track-group'));
+            safeGetElement('dimensionTrackGroupCatBtn')?.addEventListener('click',()=>setDimension('track-group-category'));
+            safeGetElement('applyComboBtn')?.addEventListener('click', applyComboConfiguration);
+            safeGetElement('executeGroupingBtn')?.addEventListener('click', executeGrouping);
+            safeGetElement('showDistBtn')?.addEventListener('click', showDistributionModal);
+            safeGetElement('applyDistBtn')?.addEventListener('click', applyDistributionAdjustment);
+            safeGetElement('clearModifiedBtn')?.addEventListener('click', clearModifiedMark);
+            safeGetElement('downloadResultBtn')?.addEventListener('click', downloadResult);
+            safeGetElement('downloadDistExcelBtn')?.addEventListener('click', ()=>{ if(!groupingResult.length){alert('无分布数据'); return;} const schools=Object.keys(schoolTotal).sort((a,b)=>schoolTotal[b]-schoolTotal[a]); const rows=[['高校名称',...finalGroups.map(g=>g.name),'总计']]; for(let school of schools){ let row=[school],rowTotal=0; for(let g of finalGroups){ let val=distributionData[school]?.[g.name]||0; rowTotal+=val; row.push(val); } row.push(rowTotal); rows.push(row); } const ws=XLSX.utils.aoa_to_sheet(rows); const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'高校分布'); XLSX.writeFile(wb,`高校分布_${new Date().toISOString().slice(0,19)}.xlsx`); });
+            safeGetElement('resetAllBtn')?.addEventListener('click',()=>{ if(confirm('重置所有数据？')) location.reload(); });
+            safeGetElement('recalcConsecutiveBtn')?.addEventListener('click',()=>{ refreshAllConsecutiveStats(); renderGroupingResultWithDrag(); alert('已重新统计连续次数'); });
+            let avoidModal=null; const avoidModalEl=safeGetElement('avoidModal'); if(avoidModalEl) avoidModal=new bootstrap.Modal(avoidModalEl);
+            safeGetElement('openAvoidBtn')?.addEventListener('click',()=>{ if(!finalGroups.length){ alert('请先生成评审组'); return; } const allSchools=[...new Set(projects.map(p=>p.school))]; let html=''; finalGroups.forEach(g=>{ const current=avoidRules[g.name]||[]; html+=`<div class="mb-3 border p-2 rounded"><strong>${escapeHtml(g.name)}</strong><select class="form-select form-select-sm avoid-select mt-1" data-group="${escapeAttr(g.name)}"><option value="">添加回避学校</option>${allSchools.map(s=>`<option value="${escapeAttr(s)}">${escapeHtml(s)}</option>`).join('')}</select><div id="tags_${g.id}" class="mt-2">${current.map(s=>`<span class="avoid-rule-tag">${escapeHtml(s)}<span class="remove-avoid" data-group="${escapeAttr(g.name)}" data-school="${escapeAttr(s)}">✕</span></span>`).join('')}</div></div>`; }); safeGetElement('avoidModalBody').innerHTML=html; function refreshTags(){ finalGroups.forEach(g=>{ const ctn=safeGetElement(`tags_${g.id}`); if(ctn){ const schools=avoidRules[g.name]||[]; ctn.innerHTML=schools.map(s=>`<span class="avoid-rule-tag">${escapeHtml(s)}<span class="remove-avoid" data-group="${escapeAttr(g.name)}" data-school="${escapeAttr(s)}">✕</span></span>`).join(''); ctn.querySelectorAll('.remove-avoid').forEach(el=>el.addEventListener('click',()=>{ const gname=el.dataset.group, sch=el.dataset.school; if(avoidRules[gname]) avoidRules[gname]=avoidRules[gname].filter(x=>x!==sch); refreshTags(); })); } }); } refreshTags(); avoidModal.show(); });
+            safeGetElement('saveAvoidModalBtn')?.addEventListener('click',()=>{ avoidModal.hide(); alert('回避规则已保存'); });
+            const distModalClean=document.getElementById('distModal'); if(distModalClean) distModalClean.addEventListener('hidden.bs.modal',()=>{ document.querySelectorAll('.modal-backdrop').forEach(b=>b.remove()); document.body.classList.remove('modal-open'); });
+
+            // ========= 新增清除缓存按钮逻辑 =========
+            const clearCacheBtn = document.getElementById('clearCacheBtn');
+            if (clearCacheBtn) {
+                clearCacheBtn.addEventListener('click', () => {
+                    if (confirm('⚠️ 清除缓存将删除所有本地授权信息，页面将重置。是否继续？')) {
+                        localStorage.clear();
+                        alert('缓存已清除，页面将重新加载。');
+                        location.reload();
                     }
                 });
-                sortableInstances.push(sortable);
-            });
-        }
-        
-        function generateDistributionData() { schoolTotal={}; projects.forEach(p=>{ schoolTotal[p.school]=(schoolTotal[p.school]||0)+1; }); let dist={}; for(let grp of groupingResult) for(let p of grp.projects){ if(!dist[p.school]) dist[p.school]={}; dist[p.school][grp.group]=(dist[p.school][grp.group]||0)+1; } distributionData=dist; modifiedSchools.clear(); }
-        function showDistributionModal() { if (!groupingResult.length) { alert('请先执行分组'); return; } const modalElem = document.getElementById('distModal'); currentDistModal = new bootstrap.Modal(modalElem, { backdrop: 'static' }); renderDistTableContent(); currentDistModal.show(); }
-        function renderDistTableContent() { const container = safeGetElement('distModalBody'); if(!container) return; const schools = Object.keys(schoolTotal).sort((a,b)=>schoolTotal[b]-schoolTotal[a]); let html = `<div class="distribution-wrapper"><table class="dist-table" id="distMainTable"><thead><tr><th class="school-col">高校名称</th>`; finalGroups.forEach(g => { const totalCap = Object.values(g.capacitiesByCombo).reduce((a,b)=>a+b,0); html+=`<th>${escapeHtml(g.name)}<br><span class="group-setting">容量:${totalCap}</span></th>`; }); html+=`<th>高校总计</th></tr></thead><tbody>`; for(let school of schools){ let rowTotal=0; let cells=''; for(let g of finalGroups){ let val=distributionData[school]?.[g.name]||0; rowTotal+=val; cells+=`<td><input type="number" class="editable-number" value="${val}" data-school="${escapeAttr(school)}" data-group="${escapeAttr(g.name)}"></td>`; } const rowClass=(modifiedSchools.has(school) || rowTotal!==schoolTotal[school])?'modified-row':''; const errorSpan=(rowTotal!==schoolTotal[school])?`<span class="validation-tip">总数不符</span>`:''; html+=`<tr class="${rowClass}" data-school="${escapeAttr(school)}"><td class="school-col">${escapeHtml(school)}</td>${cells}<td class="${rowTotal!==schoolTotal[school]?'school-imbalance':''}">${rowTotal} (原始:${schoolTotal[school]})${errorSpan}</td></tr>`; } html+=`</tbody><tfoot><tr><th>合计</th>`; let grandTotal=0; for(let g of finalGroups){ const groupTotal=schools.reduce((sum,s)=>sum+(distributionData[s]?.[g.name]||0),0); const totalCap=Object.values(g.capacitiesByCombo).reduce((a,b)=>a+b,0); grandTotal+=groupTotal; let cls='',tip=''; if(groupTotal>totalCap){ cls='school-imbalance'; tip=`<span class="validation-tip">超出容量</span>`; } else if(groupTotal<totalCap && groupTotal>0){ cls='school-insufficient'; tip=`<span class="insufficient-tip">分配不足</span>`; } html+=`<th class="${cls}">${groupTotal} / ${totalCap}${tip}</th>`; } html+=`<th>${grandTotal}</th></tr></tfoot></table></div>`; container.innerHTML=html; const table = document.getElementById('distMainTable'); if(table) table.querySelectorAll('.editable-number').forEach(input => { input.removeEventListener('change', distInputHandler); input.addEventListener('change', distInputHandler); }); }
-        function distInputHandler(e) { const input=e.target; const school=input.dataset.school; const group=input.dataset.group; let newVal=parseInt(input.value); if(isNaN(newVal)) newVal=0; if(!distributionData[school]) distributionData[school]={}; distributionData[school][group]=newVal; modifiedSchools.add(school); renderDistTableContent(); }
-        function applyDistributionAdjustment() { if (!confirm('应用调整并重新分组？')) return; let errors=[]; const schools=Object.keys(schoolTotal); for(let school of schools){ let rowTotal=finalGroups.reduce((sum,g)=>sum+(distributionData[school]?.[g.name]||0),0); if(rowTotal!==schoolTotal[school]) errors.push(`${school} 总数不符`); } for(let g of finalGroups){ const totalCap=Object.values(g.capacitiesByCombo).reduce((a,b)=>a+b,0); const groupTotal=schools.reduce((sum,s)=>sum+(distributionData[s]?.[g.name]||0),0); if(groupTotal>totalCap) errors.push(`${g.name} 超出容量`); } for(let school of schools) for(let g of finalGroups) if((distributionData[school]?.[g.name]||0)>0 && (avoidRules[g.name]||[]).includes(school)) errors.push(`回避冲突：${school} 不能分配到 ${g.name}`); if(errors.length){ alert('校验失败：\n'+errors.join('\n')); return; } forceCloseModal(document.getElementById('distModal')); executeGrouping(); }
-        function clearModifiedMark() { modifiedSchools.clear(); renderDistTableContent(); }
-        function downloadResult() { if(!groupingResult.length){alert('请先执行分组'); return;} const headers=['项目名称','所属学校','赛道','参赛组别','参赛类别','所属地区','负责人姓名','负责人手机号','评审组','组内编号','是否同校连续']; const rows=[headers]; for(let grp of groupingResult) for(let p of grp.projects) rows.push([p.name,p.school,p.track,p.groupLevel,p.category,p.region||'',p.leader||'',p.phone||'',grp.group,p.groupIndex,p.isConsecutive?'是':'']); const ws=XLSX.utils.aoa_to_sheet(rows); const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'分组结果'); XLSX.writeFile(wb,`分组结果_${new Date().toISOString().slice(0,19)}.xlsx`); }
-        
-        // 事件绑定
-        safeGetElement('downloadTemplateBtn')?.addEventListener('click', ()=>{
-            const data=[['赛道','参赛组别','参赛类别','项目名称','所属地区','所属学校','负责人姓名','负责人手机号'],['高教主赛道','本科生创意组','新工科类','智能机器人','华东','清华大学','张一','138001']];
-            const ws=XLSX.utils.aoa_to_sheet(data); ws['!cols']=[{wch:14},{wch:12},{wch:12},{wch:28},{wch:10},{wch:18},{wch:12},{wch:12}];
-            const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'项目模板'); XLSX.writeFile(wb,'项目导入模板V9.xlsx');
+            }
         });
-        safeGetElement('projectFile')?.addEventListener('change', function(e) {
-            const file=e.target.files[0]; if(!file) return;
-            const reader=new FileReader();
-            reader.onload=ev=>{
-                try{
-                    const data=new Uint8Array(ev.target.result);
-                    const wb=XLSX.read(data,{type:'array'});
-                    const ws=wb.Sheets[wb.SheetNames[0]];
-                    const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:true});
-                    if(rows.length<2) throw new Error('无数据');
-                    const header=rows[0];
-                    const idx={track:header.findIndex(c=>c&&c.includes('赛道')), group:header.findIndex(c=>c&&c.includes('参赛组别')), cat:header.findIndex(c=>c&&c.includes('参赛类别')), name:header.findIndex(c=>c&&c.includes('项目名称')), region:header.findIndex(c=>c&&c.includes('地区')), school:header.findIndex(c=>c&&c.includes('所属学校')), leader:header.findIndex(c=>c&&c.includes('负责人姓名')), phone:header.findIndex(c=>c&&c.includes('负责人手机号'))};
-                    const newProjects=[];
-                    for(let i=1;i<rows.length;i++){ const row=rows[i]; if(!row||row.length<2) continue;
-                        const track=idx.track>=0?(row[idx.track]||'').toString().trim():''; const groupLevel=idx.group>=0?(row[idx.group]||'').toString().trim():''; const category=idx.cat>=0?(row[idx.cat]||'').toString().trim():''; const name=idx.name>=0?(row[idx.name]||'').toString().trim():''; const region=idx.region>=0?(row[idx.region]||'').toString().trim():''; const school=idx.school>=0?(row[idx.school]||'').toString().trim():''; const leader=idx.leader>=0?(row[idx.leader]||'').toString().trim():''; const phone=idx.phone>=0?(row[idx.phone]||'').toString().trim():'';
-                        if(name&&school) newProjects.push({name,school,track,groupLevel,category,region,leader,phone});
+    </script>
+
+    <!-- ========= 授权控制脚本（完全基于本地时间，30分钟轮询） ========= -->
+    <script>
+        (function() {
+            const SECRET_KEY = "YourPrivateKey_20260529_SecretString123456";
+            const POLL_INTERVAL = 30 * 60 * 1000; // 30分钟
+            const ROLLBACK_DAY = 7;
+            const ROLLBACK_TS = ROLLBACK_DAY * 24 * 3600;
+
+            let authPollTimer = null;
+            const lockMask = document.getElementById('lockMask');
+            const appContent = document.getElementById('appContent');
+            const tipText = document.getElementById('tipText');
+            const inpAccount = document.getElementById('inpAccount');
+            const inpCode = document.getElementById('inpCode');
+
+            function getLocalAuth() {
+                const str = localStorage.getItem('auth_data');
+                if (!str) return null;
+                try { return JSON.parse(str); } catch(e) { return null; }
+            }
+            function saveLocalAuth(account, code, startTs, endTs, role, firstUseTs) {
+                localStorage.setItem('auth_data', JSON.stringify({ account, code, startTs, endTs, role, firstUseTs }));
+            }
+            function clearLocalAuth() {
+                localStorage.removeItem('auth_data');
+            }
+
+            function parseAndVerifyCode(account, code) {
+                try {
+                    let decoded;
+                    try { decoded = atob(code); } catch(e) { return null; }
+                    const parts = decoded.split('|');
+                    if (parts.length !== 5) return null;
+                    const [decAccount, startTsStr, endTsStr, role, providedHmac] = parts;
+                    if (decAccount !== account) return null;
+                    const startTs = parseInt(startTsStr, 10);
+                    const endTs = parseInt(endTsStr, 10);
+                    if (isNaN(startTs) || isNaN(endTs) || startTs >= endTs) return null;
+                    if (role !== 'staff' && role !== 'customer') return null;
+                    const raw = `${account}|${startTs}|${endTs}|${role}`;
+                    const calcHmac = CryptoJS.HmacSHA256(raw, SECRET_KEY).toString(CryptoJS.enc.Hex);
+                    if (calcHmac !== providedHmac) return null;
+                    return { account, startTs, endTs, role };
+                } catch(e) { return null; }
+            }
+
+            function checkTimeValid(authData, nowLocal) {
+                if (nowLocal < authData.startTs || nowLocal > authData.endTs) return false;
+                let firstUse = authData.firstUseTs;
+                if (!firstUse) firstUse = nowLocal;
+                if (nowLocal < firstUse - ROLLBACK_TS) return false;
+                return true;
+            }
+
+            function lockPage(msg) {
+                lockMask.style.display = 'flex';
+                if (appContent) appContent.style.display = 'none';
+                tipText.innerText = msg || '授权失效，请重新登录';
+                clearLocalAuth();
+                if (authPollTimer) { clearInterval(authPollTimer); authPollTimer = null; }
+            }
+
+            function unlockPage() {
+                lockMask.style.display = 'none';
+                if (appContent) appContent.style.display = 'block';
+                tipText.innerText = '';
+            }
+
+            function startPoll() {
+                if (authPollTimer) clearInterval(authPollTimer);
+                authPollTimer = setInterval(() => {
+                    const auth = getLocalAuth();
+                    if (!auth) {
+                        lockPage("授权信息丢失，请重新登录");
+                        return;
                     }
-                    if(!newProjects.length) throw new Error('无有效项目');
-                    projects=newProjects; renderProjectPreview();
-                }catch(err){ alert('导入失败:'+err.message); this.value=''; }
-            }; reader.readAsArrayBuffer(file);
-        });
-        function setDimension(mode){ dimensionMode=mode; document.getElementById('dimensionTrackGroupBtn').classList.toggle('active',mode==='track-group'); document.getElementById('dimensionTrackGroupCatBtn').classList.toggle('active',mode==='track-group-category'); if(projects.length){ rebuildByDimension(); safeGetElement('strategySection').style.display='none'; safeGetElement('resultSection').style.display='none'; } }
-        safeGetElement('dimensionTrackGroupBtn')?.addEventListener('click',()=>setDimension('track-group'));
-        safeGetElement('dimensionTrackGroupCatBtn')?.addEventListener('click',()=>setDimension('track-group-category'));
-        safeGetElement('applyComboBtn')?.addEventListener('click', applyComboConfiguration);
-        safeGetElement('executeGroupingBtn')?.addEventListener('click', executeGrouping);
-        safeGetElement('showDistBtn')?.addEventListener('click', showDistributionModal);
-        safeGetElement('applyDistBtn')?.addEventListener('click', applyDistributionAdjustment);
-        safeGetElement('clearModifiedBtn')?.addEventListener('click', clearModifiedMark);
-        safeGetElement('downloadResultBtn')?.addEventListener('click', downloadResult);
-        safeGetElement('downloadDistExcelBtn')?.addEventListener('click', ()=>{ if(!groupingResult.length){alert('无分布数据'); return;} const schools=Object.keys(schoolTotal).sort((a,b)=>schoolTotal[b]-schoolTotal[a]); const rows=[['高校名称',...finalGroups.map(g=>g.name),'总计']]; for(let school of schools){ let row=[school],rowTotal=0; for(let g of finalGroups){ let val=distributionData[school]?.[g.name]||0; rowTotal+=val; row.push(val); } row.push(rowTotal); rows.push(row); } const ws=XLSX.utils.aoa_to_sheet(rows); const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'高校分布'); XLSX.writeFile(wb,`高校分布_${new Date().toISOString().slice(0,19)}.xlsx`); });
-        safeGetElement('resetAllBtn')?.addEventListener('click',()=>{ if(confirm('重置所有数据？')) location.reload(); });
-        safeGetElement('recalcConsecutiveBtn')?.addEventListener('click',()=>{ refreshAllConsecutiveStats(); renderGroupingResultWithDrag(); alert('已重新统计连续次数'); });
-        let avoidModal=null; const avoidModalEl=safeGetElement('avoidModal'); if(avoidModalEl) avoidModal=new bootstrap.Modal(avoidModalEl);
-        safeGetElement('openAvoidBtn')?.addEventListener('click',()=>{ if(!finalGroups.length){ alert('请先生成评审组'); return; } const allSchools=[...new Set(projects.map(p=>p.school))]; let html=''; finalGroups.forEach(g=>{ const current=avoidRules[g.name]||[]; html+=`<div class="mb-3 border p-2 rounded"><strong>${escapeHtml(g.name)}</strong><select class="form-select form-select-sm avoid-select mt-1" data-group="${escapeAttr(g.name)}"><option value="">添加回避学校</option>${allSchools.map(s=>`<option value="${escapeAttr(s)}">${escapeHtml(s)}</option>`).join('')}</select><div id="tags_${g.id}" class="mt-2">${current.map(s=>`<span class="avoid-rule-tag">${escapeHtml(s)}<span class="remove-avoid" data-group="${escapeAttr(g.name)}" data-school="${escapeAttr(s)}">✕</span></span>`).join('')}</div></div>`; }); safeGetElement('avoidModalBody').innerHTML=html; function refreshTags(){ finalGroups.forEach(g=>{ const ctn=safeGetElement(`tags_${g.id}`); if(ctn){ const schools=avoidRules[g.name]||[]; ctn.innerHTML=schools.map(s=>`<span class="avoid-rule-tag">${escapeHtml(s)}<span class="remove-avoid" data-group="${escapeAttr(g.name)}" data-school="${escapeAttr(s)}">✕</span></span>`).join(''); ctn.querySelectorAll('.remove-avoid').forEach(el=>el.addEventListener('click',()=>{ const gname=el.dataset.group, sch=el.dataset.school; if(avoidRules[gname]) avoidRules[gname]=avoidRules[gname].filter(x=>x!==sch); refreshTags(); })); } }); } refreshTags(); avoidModal.show(); });
-        safeGetElement('saveAvoidModalBtn')?.addEventListener('click',()=>{ avoidModal.hide(); alert('回避规则已保存'); });
-        const distModalClean=document.getElementById('distModal'); if(distModalClean) distModalClean.addEventListener('hidden.bs.modal',()=>{ document.querySelectorAll('.modal-backdrop').forEach(b=>b.remove()); document.body.classList.remove('modal-open'); });
-    });
-</script>
+                    const nowLocal = Math.floor(Date.now() / 1000);
+                    if (!checkTimeValid(auth, nowLocal)) {
+                        lockPage("授权已过期，请重新登录");
+                    }
+                }, POLL_INTERVAL);
+            }
+
+            async function performAuth(account, code, isAuto = false) {
+                const info = parseAndVerifyCode(account, code);
+                if (!info) {
+                    if (!isAuto) tipText.innerText = "账号或授权码错误";
+                    clearLocalAuth();
+                    return false;
+                }
+                const { startTs, endTs, role } = info;
+                const nowLocal = Math.floor(Date.now() / 1000);
+                let firstUseTs = nowLocal;
+                const existing = getLocalAuth();
+                if (existing && existing.account === account) {
+                    firstUseTs = existing.firstUseTs || nowLocal;
+                }
+                if (!checkTimeValid({ startTs, endTs, firstUseTs }, nowLocal)) {
+                    if (!isAuto) tipText.innerText = "授权已过期或系统时间异常（请勿回拨时钟）";
+                    clearLocalAuth();
+                    return false;
+                }
+                saveLocalAuth(account, code, startTs, endTs, role, firstUseTs);
+                unlockPage();
+                startPoll();
+                return true;
+            }
+
+            async function doLogin() {
+                tipText.innerText = "";
+                const account = inpAccount.value.trim();
+                const code = inpCode.value.trim();
+                if (!account || !code) {
+                    tipText.innerText = "请输入账号和授权码";
+                    return;
+                }
+                await performAuth(account, code, false);
+            }
+
+            async function autoLoginFromStorage() {
+                const auth = getLocalAuth();
+                if (!auth) return;
+                const success = await performAuth(auth.account, auth.code, true);
+                if (!success) lockPage("存储的授权已失效，请重新登录");
+            }
+
+            document.getElementById('doLoginBtn').addEventListener('click', doLogin);
+            autoLoginFromStorage();
+        })();
+    </script>
 </body>
 </html>
